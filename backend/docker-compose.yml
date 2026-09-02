@@ -1,0 +1,268 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${DB_MIGRATION_USER:?DB_MIGRATION_USER is required}
+      POSTGRES_PASSWORD: ${DB_MIGRATION_PASSWORD:?DB_MIGRATION_PASSWORD is required}
+      DB_API_PASSWORD: ${DB_API_PASSWORD:?DB_API_PASSWORD is required}
+      DB_SCHEDULER_PASSWORD: ${DB_SCHEDULER_PASSWORD:?DB_SCHEDULER_PASSWORD is required}
+      DB_EMAIL_WORKER_PASSWORD: ${DB_EMAIL_WORKER_PASSWORD:?DB_EMAIL_WORKER_PASSWORD is required}
+      DB_YOUTUBE_WORKER_PASSWORD: ${DB_YOUTUBE_WORKER_PASSWORD:?DB_YOUTUBE_WORKER_PASSWORD is required}
+      DB_CALCULATION_WORKER_PASSWORD: ${DB_CALCULATION_WORKER_PASSWORD:?DB_CALCULATION_WORKER_PASSWORD is required}
+      DB_EXPORT_WORKER_PASSWORD: ${DB_EXPORT_WORKER_PASSWORD:?DB_EXPORT_WORKER_PASSWORD is required}
+      DB_RETENTION_WORKER_PASSWORD: ${DB_RETENTION_WORKER_PASSWORD:?DB_RETENTION_WORKER_PASSWORD is required}
+      DB_LIFECYCLE_WORKER_PASSWORD: ${DB_LIFECYCLE_WORKER_PASSWORD:?DB_LIFECYCLE_WORKER_PASSWORD is required}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres:/docker-entrypoint-initdb.d:ro
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
+    entrypoint: ["/bin/sh", "/config/bootstrap.sh"]
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      S3_API_ACCESS_KEY: ${S3_API_ACCESS_KEY:?S3_API_ACCESS_KEY is required}
+      S3_API_SECRET_KEY: ${S3_API_SECRET_KEY:?S3_API_SECRET_KEY is required}
+      S3_WORKER_ACCESS_KEY: ${S3_WORKER_ACCESS_KEY:?S3_WORKER_ACCESS_KEY is required}
+      S3_WORKER_SECRET_KEY: ${S3_WORKER_SECRET_KEY:?S3_WORKER_SECRET_KEY is required}
+    volumes:
+      - ./docker/minio:/config:ro
+    depends_on:
+      - minio
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+
+  migrate:
+    build:
+      context: .
+      target: runtime
+    command: alembic upgrade head
+    environment:
+      DATABASE_URL: postgresql+psycopg://${DB_MIGRATION_USER}:${DB_MIGRATION_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build:
+      context: .
+      target: runtime
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    restart: unless-stopped
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg://amp_api:${DB_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      JWT_SECRET: local-development-secret-that-is-longer-than-thirty-two-bytes
+      JWT_ISSUER: amp-content-factory
+      JWT_AUDIENCE: amp-content-factory-web
+      COOKIE_SECURE: "false"
+      REDIS_URL: redis://redis:6379/0
+      RATE_LIMIT_REDIS_URL: redis://redis:6379/1
+      FRONTEND_URL: http://localhost:5173
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: private-exports
+      S3_ACCESS_KEY: ${S3_API_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_API_SECRET_KEY}
+      S3_FORCE_PATH_STYLE: "true"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    ports:
+      - "8000:8000"
+
+  email-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.email_worker:celery_app worker -Q email --concurrency=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_email_worker:${DB_EMAIL_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+      SMTP_USE_TLS: "false"
+      SMTP_FROM_EMAIL: no-reply@ampgroup.test
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  youtube-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.youtube_worker:celery_app worker -Q youtube --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_youtube_worker:${DB_YOUTUBE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
+      YOUTUBE_REQUEST_TIMEOUT_SECONDS: "15"
+      SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  calculation-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.calculation_worker:celery_app worker -Q calculations --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_calculation_worker:${DB_CALCULATION_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  lifecycle-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.lifecycle_worker:celery_app worker -Q lifecycle --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_lifecycle_worker:${DB_LIFECYCLE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  export-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.export_worker:celery_app worker -Q exports --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_export_worker:${DB_EXPORT_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: private-exports
+      S3_ACCESS_KEY: ${S3_WORKER_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_WORKER_SECRET_KEY}
+      S3_FORCE_PATH_STYLE: "true"
+      EXPORT_ARTIFACT_TTL_HOURS: ${EXPORT_ARTIFACT_TTL_HOURS:-24}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  scheduler:
+    build:
+      context: .
+      target: runtime
+    command: python -m app.scheduler
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_scheduler:${DB_SCHEDULER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      YOUTUBE_DAILY_WORKING_LIMIT: "9000"
+      SCHEDULER_POLL_INTERVAL_SECONDS: "2"
+      YOUTUBE_COLLECTION_HOUR_MOSCOW: "23"
+      CALCULATION_CLOSE_DELAY_MINUTES: "5"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  creator-retention:
+    build:
+      context: .
+      target: runtime
+    command: python -m app.cli.anonymize_payouts --years 5 --batch-size 100
+    profiles: ["maintenance"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_retention_worker:${DB_RETENTION_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  test:
+    build:
+      context: .
+      target: test
+    profiles: ["test"]
+    environment:
+      DATABASE_URL: "sqlite+pysqlite:///:memory:"
+      JWT_SECRET: test-secret-that-is-definitely-long-enough-123
+      COOKIE_SECURE: "false"
+      REDIS_URL: redis://localhost:6379/0
+      RATE_LIMIT_REDIS_URL: redis://localhost:6379/1
+      FRONTEND_URL: http://localhost:5173
+      SMTP_HOST: localhost
+      SMTP_FROM_EMAIL: no-reply@example.test
+
+volumes:
+  postgres_data:
+  minio_data:

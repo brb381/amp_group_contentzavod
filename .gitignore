@@ -1,0 +1,28 @@
+# Local secrets and environment overrides
+.env
+.env.*
+!.env.example
+
+# Python build and test output
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Virtual environments and editor state
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Local diagnostic artifacts
+ggl/
+
+# Operating-system files
+.DS_Store
+Thumbs.db
