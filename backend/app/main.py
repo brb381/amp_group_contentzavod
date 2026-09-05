@@ -7,6 +7,7 @@ from sqlalchemy.exc import OperationalError
 
 from app.api.v1.auth import router as auth_router
 from app.api.v1.creator_profiles import router as creator_profiles_router
+from app.api.v1.dashboards import router as dashboards_router
 from app.api.v1.social_account_moderation import router as social_account_moderation_router
 from app.api.v1.security_events import router as security_events_router
 from app.api.v1.admin_users import router as admin_users_router
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="AMP Content Factory API", version="0.1.0")
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(creator_profiles_router, prefix="/api/v1")
+    app.include_router(dashboards_router, prefix="/api/v1")
     app.include_router(social_account_moderation_router, prefix="/api/v1")
     app.include_router(security_events_router, prefix="/api/v1")
     app.include_router(admin_users_router, prefix="/api/v1")
