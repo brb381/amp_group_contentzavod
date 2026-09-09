@@ -17,8 +17,16 @@ def enum_values(enum_type: type[Enum]) -> list[str]:
 
 
 class ExportType(str, Enum):
+    BLOGGERS = "bloggers"
+    SOCIAL_ACCOUNTS = "social_accounts"
+    PUBLICATIONS = "publications"
+    VIEW_READINGS = "view_readings"
+    MODERATION_HISTORY = "moderation_history"
+    ACCRUALS = "accruals"
     PAYOUT_REGISTER = "payout_register"
     PAYOUT_HISTORY = "payout_history"
+    SUPPORT_TICKETS = "support_tickets"
+    AUDIT_LOG = "audit_log"
 
 
 class ExportFormat(str, Enum):
@@ -88,6 +96,9 @@ class ExportJob(Base):
     row_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     data_as_of: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    artifact_deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     last_error_code: Mapped[str | None] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

@@ -145,12 +145,25 @@ column definitions in code, calculates SHA-256 and uploads the artifact to a pri
 S3-compatible bucket. MinIO implements that interface locally; production may use managed
 S3-compatible storage.
 
+All report types use the single `/api/v1/staff/exports` resource. There are no legacy
+type-specific routes. Blogger, social-account, publication, reading, moderation, accrual,
+payout, support and audit schemas are versioned Python column definitions; no binary report
+template is stored in the repository or object storage. Authorization is evaluated both when
+the job is created and whenever its status or artifact is read. Non-admin staff can only see
+jobs they requested and only while their current role still permits that report type.
+
 The API credential can only read artifacts; the worker credential can write and delete
 them. Files expire after 24 hours, are never public, and downloads require a fresh staff
 authorization check. CSV/XLSX use Moscow calendar dates, kopeck-safe money conversion and
 formula-injection protection. The immutable job stores filename, size, row count, data
 snapshot time and content hash; request and download actions are recorded in the security
 journal.
+
+Expired artifacts are physically removed outside the API process with
+`python -m app.cli.cleanup_exports`. The command uses the isolated export-worker database and
+S3 credentials, marks successful deletion in `export_jobs.artifact_deleted_at`, and can be
+scheduled by the deployment platform. Full database and object-storage backups are separate
+infrastructure jobs and are never exposed as an HTTP operation.
 
 ### Account deletion and PII retention
 

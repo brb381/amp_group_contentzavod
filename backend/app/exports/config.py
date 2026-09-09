@@ -15,8 +15,11 @@ class ExportStorageSettings(BaseSettings):
     s3_force_path_style: bool = True
 
 
-class ExportWorkerSettings(ExportStorageSettings):
+class ExportCleanupSettings(ExportStorageSettings):
     database_url: str
+
+
+class ExportWorkerSettings(ExportCleanupSettings):
     redis_url: str
     export_artifact_ttl_hours: int = Field(default=24, ge=1, le=168)
 
@@ -24,6 +27,11 @@ class ExportWorkerSettings(ExportStorageSettings):
 @lru_cache
 def get_export_storage_settings() -> ExportStorageSettings:
     return ExportStorageSettings()
+
+
+@lru_cache
+def get_export_cleanup_settings() -> ExportCleanupSettings:
+    return ExportCleanupSettings()
 
 
 @lru_cache

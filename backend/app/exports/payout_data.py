@@ -4,17 +4,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased
 
 from app.auth.models import User
+from app.exports.data import ExportTooLargeError, MAX_EXPORT_ROWS
 from app.exports.models import ExportType
 from app.exports.schemas import PayoutExportFilters
 from app.payouts.models import PayoutRequest, PayoutStatus, RecipientType
 from app.payouts.policy import MOSCOW
-
-
-MAX_EXPORT_ROWS = 10_000
-
-
-class ExportTooLargeError(Exception):
-    pass
 
 
 def _utc_start(value):

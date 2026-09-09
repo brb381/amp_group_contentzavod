@@ -30,7 +30,16 @@ def _set_private_no_store(response: Response) -> None:
 
 router = APIRouter(tags=["exports"], dependencies=[Depends(_set_private_no_store)])
 Exporter = Annotated[
-    User, Depends(require_active_roles(Role.FINANCE, Role.ADMIN))
+    User,
+    Depends(
+        require_active_roles(
+            Role.MODERATOR,
+            Role.MANAGER,
+            Role.FINANCE,
+            Role.ANALYST,
+            Role.ADMIN,
+        )
+    ),
 ]
 
 
@@ -40,11 +49,11 @@ def get_artifact_store() -> ArtifactStore:
 
 
 @router.post(
-    "/staff/payout-exports",
+    "/staff/exports",
     response_model=ExportJobResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-def post_payout_export(
+def post_export(
     payload: ExportCreateRequest,
     request: Request,
     actor: Exporter,
@@ -59,8 +68,8 @@ def post_payout_export(
     )
 
 
-@router.get("/staff/payout-exports", response_model=ExportJobListResponse)
-def get_payout_exports(
+@router.get("/staff/exports", response_model=ExportJobListResponse)
+def get_exports(
     actor: Exporter,
     page: int = 1,
     page_size: int = 20,
@@ -71,8 +80,8 @@ def get_payout_exports(
     return list_export_jobs(db, actor=actor, page=page, page_size=page_size)
 
 
-@router.get("/staff/payout-exports/{export_id}", response_model=ExportJobResponse)
-def get_payout_export(
+@router.get("/staff/exports/{export_id}", response_model=ExportJobResponse)
+def get_export(
     export_id: uuid.UUID,
     actor: Exporter,
     db: Session = Depends(get_db, scope="function"),
@@ -80,8 +89,8 @@ def get_payout_export(
     return get_export_job_response(db, actor=actor, export_id=export_id)
 
 
-@router.get("/staff/payout-exports/{export_id}/download")
-def download_payout_export(
+@router.get("/staff/exports/{export_id}/download")
+def download_export(
     export_id: uuid.UUID,
     request: Request,
     actor: Exporter,
@@ -102,7 +111,7 @@ def download_payout_export(
     record_event(
         db,
         context=context_from_request(request),
-        action=AuditAction.PAYOUT_EXPORT_DOWNLOADED,
+        action=AuditAction.EXPORT_DOWNLOADED,
         actor_user_id=actor.id,
         actor_role=actor.role.value,
         object_type="export_job",

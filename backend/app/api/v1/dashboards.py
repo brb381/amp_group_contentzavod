@@ -28,17 +28,19 @@ router = APIRouter(
     tags=["dashboards"], dependencies=[Depends(_set_private_no_store)]
 )
 Blogger = Annotated[User, Depends(require_roles(Role.BLOGGER))]
-StaffViewer = Annotated[
+StaffDashboardViewer = Annotated[
     User,
     Depends(
         require_active_roles(
             Role.ADMIN,
             Role.MODERATOR,
             Role.MANAGER,
-            Role.FINANCE,
-            Role.ANALYST,
         )
     ),
+]
+AnalyticsViewer = Annotated[
+    User,
+    Depends(require_active_roles(Role.ADMIN, Role.ANALYST)),
 ]
 
 
@@ -52,7 +54,7 @@ def get_creator_dashboard(
 
 @router.get("/staff/dashboard", response_model=StaffDashboardResponse)
 def get_staff_dashboard(
-    _: StaffViewer,
+    _: StaffDashboardViewer,
     db: Session = Depends(get_db, scope="function"),
 ) -> StaffDashboardResponse:
     return staff_dashboard(db, now=utc_now())
@@ -60,7 +62,7 @@ def get_staff_dashboard(
 
 @router.get("/staff/analytics", response_model=StaffAnalyticsResponse)
 def get_staff_analytics(
-    _: StaffViewer,
+    _: AnalyticsViewer,
     period_from: date | None = Query(default=None, alias="periodFrom"),
     period_to: date | None = Query(default=None, alias="periodTo"),
     blogger_id: uuid.UUID | None = Query(default=None, alias="bloggerId"),

@@ -1481,7 +1481,7 @@ class _ExportProducer:
 def _complete_export(client, *, export_format, store, idempotency_key=None):
     today = moscow_today()
     created = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json={
             "idempotency_key": str(idempotency_key or uuid.uuid4()),
@@ -1501,9 +1501,7 @@ def _complete_export(client, *, export_format, store, idempotency_key=None):
     )
     command = ExportCommand.model_validate(producer.commands[0][1])
     execute_export(command, client.app.state.test_session, store)
-    status_response = client.get(
-        f"/api/v1/staff/payout-exports/{created.json()['id']}"
-    )
+    status_response = client.get(f"/api/v1/staff/exports/{created.json()['id']}")
     return created, status_response
 
 
@@ -1524,7 +1522,7 @@ def test_export_api_enforces_roles_csrf_ranges_and_idempotency(client):
     _, manager_email = _seed_staff(client, Role.MANAGER, "export-denied-manager")
     _login(client, manager_email)
     denied = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=_export_payload(),
     )
@@ -1532,33 +1530,31 @@ def test_export_api_enforces_roles_csrf_ranges_and_idempotency(client):
 
     _, finance_email = _seed_staff(client, Role.FINANCE, "export-contract-finance")
     _login(client, finance_email)
-    missing_csrf = client.post(
-        "/api/v1/staff/payout-exports", json=_export_payload()
-    )
+    missing_csrf = client.post("/api/v1/staff/exports", json=_export_payload())
     assert missing_csrf.status_code == 403
-    history_denied = client.post(
-        "/api/v1/staff/payout-exports",
+    history_allowed = client.post(
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=_export_payload(export_type="payout_history"),
     )
-    assert history_denied.status_code == 403
+    assert history_allowed.status_code == 202
 
     idempotency_key = uuid.uuid4()
     payload = _export_payload(key=idempotency_key)
     first = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=payload,
     )
     repeated = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=payload,
     )
     assert first.status_code == repeated.status_code == 202
     assert first.json()["id"] == repeated.json()["id"]
     conflicting = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json={**payload, "format": "xlsx"},
     )
@@ -1571,7 +1567,7 @@ def test_export_api_enforces_roles_csrf_ranges_and_idempotency(client):
         "requested_to": "2026-02-01",
     }
     invalid_range = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=too_wide,
     )
@@ -1580,7 +1576,7 @@ def test_export_api_enforces_roles_csrf_ranges_and_idempotency(client):
     _, admin_email = _seed_staff(client, Role.ADMIN, "export-history-admin")
     _login(client, admin_email)
     history = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=_export_payload(export_type="payout_history"),
     )
@@ -1592,7 +1588,7 @@ def test_export_dispatch_broker_failure_releases_lease(client):
     _, finance_email = _seed_staff(client, Role.FINANCE, "export-broker-finance")
     _login(client, finance_email)
     created = client.post(
-        "/api/v1/staff/payout-exports",
+        "/api/v1/staff/exports",
         headers=_csrf_headers(client),
         json=_export_payload(),
     )
@@ -1607,9 +1603,7 @@ def test_export_dispatch_broker_failure_releases_lease(client):
         session_factory=client.app.state.test_session,
         task_producer=FailingProducer(),
     )
-    status_response = client.get(
-        f"/api/v1/staff/payout-exports/{created.json()['id']}"
-    )
+    status_response = client.get(f"/api/v1/staff/exports/{created.json()['id']}")
     assert status_response.status_code == 200
     assert status_response.json()["status"] == "retry_wait"
     assert status_response.json()["attempt_count"] == 0
@@ -1727,7 +1721,7 @@ def test_csv_and_xlsx_exports_are_filtered_auditable_and_formula_safe(client):
             db.scalars(
                 select(SecurityEvent)
                 .where(
-                    SecurityEvent.action == AuditAction.PAYOUT_EXPORT_DOWNLOADED,
+                    SecurityEvent.action == AuditAction.EXPORT_DOWNLOADED,
                     SecurityEvent.actor_user_id.is_not(None),
                 )
                 .order_by(SecurityEvent.occurred_at, SecurityEvent.id)

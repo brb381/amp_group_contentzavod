@@ -52,19 +52,6 @@ def dispatch_export(
             job.dispatch_id = None
             job.last_error_code = "worker_lease_expired"
 
-        ready_expired = list(
-            db.scalars(
-                select(ExportJob)
-                .where(
-                    ExportJob.status == ExportJobStatus.READY,
-                    ExportJob.expires_at <= now,
-                )
-                .with_for_update(skip_locked=True)
-            )
-        )
-        for job in ready_expired:
-            job.status = ExportJobStatus.EXPIRED
-
         job = db.scalar(
             select(ExportJob)
             .where(

@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 
+import pytest
 from sqlalchemy import select
 
 from app.auth.models import AccountStatus, Role, User
@@ -60,6 +61,14 @@ def _login(client, email: str) -> None:
         json={"email": email, "password": PASSWORD},
     )
     assert response.status_code == 200, response.text
+
+
+def _seed_staff(client, role: Role, label: str) -> str:
+    email = f"dashboard-{label}@example.com"
+    with client.app.state.test_session() as db:
+        _user(db, email, role)
+        db.commit()
+    return email
 
 
 def _seed_dashboard_data(client):
@@ -207,20 +216,15 @@ def test_creator_dashboard_uses_readings_billing_and_balance(client):
     assert body["top_video_cards"][0]["total_views"] == 1500
 
 
-def test_staff_dashboard_and_analytics_are_available_to_analyst(client):
+def test_staff_analytics_is_available_to_analyst(client):
     period = _seed_dashboard_data(client)
     _login(client, "dashboard-analyst@example.com")
 
-    dashboard = client.get("/api/v1/staff/dashboard")
     analytics = client.get(
         "/api/v1/staff/analytics",
         params={"periodFrom": period.isoformat(), "periodTo": period.isoformat()},
     )
 
-    assert dashboard.status_code == 200
-    assert dashboard.json()["overview"]["active_bloggers"] == 1
-    assert dashboard.json()["overview"]["active_publications"] == 1
-    assert dashboard.json()["overview"]["preliminary_accrual_kopecks"] == 2500
     assert analytics.status_code == 200
     body = analytics.json()
     assert body["overview"]["views"] == 500
@@ -237,6 +241,49 @@ def test_blogger_cannot_read_staff_dashboard(client):
     _login(client, "dashboard-blogger@example.com")
 
     assert client.get("/api/v1/staff/dashboard").status_code == 403
+    assert client.get("/api/v1/staff/analytics").status_code == 403
+
+
+@pytest.mark.parametrize("role", [Role.ADMIN, Role.MODERATOR, Role.MANAGER])
+def test_operational_staff_roles_can_read_staff_dashboard(client, role):
+    _seed_dashboard_data(client)
+    email = _seed_staff(client, role, f"{role.value}-dashboard")
+    _login(client, email)
+
+    response = client.get("/api/v1/staff/dashboard")
+
+    assert response.status_code == 200
+    assert response.json()["overview"]["active_bloggers"] == 1
+    assert response.json()["overview"]["active_publications"] == 1
+    assert response.json()["overview"]["preliminary_accrual_kopecks"] == 2500
+
+
+@pytest.mark.parametrize("role", [Role.FINANCE, Role.ANALYST])
+def test_non_operational_staff_roles_cannot_read_staff_dashboard(client, role):
+    _seed_dashboard_data(client)
+    email = _seed_staff(client, role, f"{role.value}-dashboard-denied")
+    _login(client, email)
+
+    assert client.get("/api/v1/staff/dashboard").status_code == 403
+
+
+@pytest.mark.parametrize("role", [Role.ADMIN, Role.ANALYST])
+def test_analytics_roles_can_read_staff_analytics(client, role):
+    _seed_dashboard_data(client)
+    email = _seed_staff(client, role, f"{role.value}-analytics")
+    _login(client, email)
+
+    assert client.get("/api/v1/staff/analytics").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "role", [Role.MODERATOR, Role.MANAGER, Role.FINANCE]
+)
+def test_non_analytics_staff_roles_cannot_read_staff_analytics(client, role):
+    _seed_dashboard_data(client)
+    email = _seed_staff(client, role, f"{role.value}-analytics-denied")
+    _login(client, email)
+
     assert client.get("/api/v1/staff/analytics").status_code == 403
 
 

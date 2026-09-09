@@ -308,9 +308,7 @@ def test_workers_cannot_read_unrelated_identity_data(postgres_connection):
         "balance_ledger",
         "payout_events",
         "payout_event_details",
-        "security_events",
         "outbox_events",
-        "view_readings",
     ],
 )
 def test_export_worker_cannot_read_unrelated_or_money_tables(
@@ -325,6 +323,38 @@ def test_export_worker_can_resolve_staff_emails(postgres_connection):
     assert _has_table_privilege(
         postgres_connection, "amp_export_worker", "users", "SELECT"
     )
+
+
+@pytest.mark.parametrize(
+    "table",
+    [
+        "creator_profiles",
+        "social_accounts",
+        "social_account_history",
+        "profile_history",
+        "video_cards",
+        "publications",
+        "publication_history",
+        "products",
+        "view_readings",
+        "view_reading_history",
+        "calculation_periods",
+        "publication_accruals",
+        "support_tickets",
+        "support_messages",
+        "security_events",
+    ],
+)
+def test_export_worker_can_only_read_report_source_tables(
+    postgres_connection, table
+):
+    assert _has_table_privilege(
+        postgres_connection, "amp_export_worker", table, "SELECT"
+    )
+    for privilege in ("INSERT", "UPDATE", "DELETE"):
+        assert not _has_table_privilege(
+            postgres_connection, "amp_export_worker", table, privilege
+        )
 
 
 @pytest.mark.parametrize(
