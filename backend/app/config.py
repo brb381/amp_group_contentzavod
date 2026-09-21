@@ -1,6 +1,7 @@
 from functools import lru_cache
+from urllib.parse import urlsplit
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +30,24 @@ class Settings(BaseSettings):
         if len(value.encode("utf-8")) < 32:
             raise ValueError("JWT_SECRET must be at least 32 bytes")
         return value
+
+    @model_validator(mode="after")
+    def validate_deployment(self) -> "Settings":
+        if self.environment not in {"development", "test", "production"}:
+            raise ValueError("ENVIRONMENT must be development, test, or production")
+        if self.environment == "production":
+            if not self.cookie_secure:
+                raise ValueError("COOKIE_SECURE must be true in production")
+            frontend = urlsplit(self.frontend_url)
+            if frontend.scheme != "https" or not frontend.hostname:
+                raise ValueError("FRONTEND_URL must be an HTTPS URL in production")
+            if frontend.hostname in {"localhost", "127.0.0.1"}:
+                raise ValueError("FRONTEND_URL must use a public hostname in production")
+            if len(self.jwt_secret.encode("utf-8")) < 48 or self.jwt_secret.lower().startswith(
+                ("replace-", "local-development", "test-secret")
+            ):
+                raise ValueError("JWT_SECRET must be a unique random production secret")
+        return self
 
 
 @lru_cache

@@ -26,3 +26,15 @@ ggl/
 # Operating-system files
 .DS_Store
 Thumbs.db
+
+# Local backup password; never commit it.
+.backup-password
+
+amp-backups/
+
+# Host maintenance lock files
+backend/.maintenance-*.lock
+backend/ops/logs/
+
+# JavaScript dependencies
+node_modules/

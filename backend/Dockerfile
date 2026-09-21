@@ -21,6 +21,7 @@ FROM base AS test
 
 USER root
 COPY tests ./tests
+COPY ops ./ops
 RUN pip install --no-cache-dir ".[dev]"
 USER appuser
 

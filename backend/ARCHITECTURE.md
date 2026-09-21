@@ -16,7 +16,7 @@ React client -> FastAPI -> PostgreSQL
                               -> Redis/Celery -> YouTube worker -> YouTube API
                               -> Redis/Celery -> calculation worker -> PostgreSQL
                               -> Redis/Celery -> export worker -> S3/MinIO
-deployment cron -> creator retention command -> PostgreSQL
+host scheduler -> creator retention command -> PostgreSQL
 ```
 
 - API validates HTTP input, authorizes the caller and commits business changes.
@@ -163,7 +163,8 @@ Expired artifacts are physically removed outside the API process with
 `python -m app.cli.cleanup_exports`. The command uses the isolated export-worker database and
 S3 credentials, marks successful deletion in `export_jobs.artifact_deleted_at`, and can be
 scheduled by the deployment platform. Full database and object-storage backups are separate
-infrastructure jobs and are never exposed as an HTTP operation.
+infrastructure jobs and are never exposed as an HTTP operation. The temporary local
+encrypted backup and guarded restore procedure is in `ops/LOCAL_BACKUPS.md`.
 
 ### Account deletion and PII retention
 
@@ -280,6 +281,33 @@ is API-only; scheduler and worker database roles receive no table privileges.
 - A process crash leaves a bounded lease; scheduler recovery makes the job due again.
 - One dispatcher failure is logged and cannot prevent other dispatchers from running.
 
+## Operational monitoring
+
+`GET /health/live` reports only API process liveness. `GET /health/ready` returns
+`200` only when PostgreSQL, both Redis databases, and the private export bucket
+respond; otherwise it returns `503` without exposing connection details. The
+MinIO API policy permits bucket metadata checks but no listing of object contents.
+
+The independent `monitor` Compose service uses the `amp_monitor` database role,
+which can only read six job-state tables. Every poll it checks API readiness,
+Redis, Celery workers consuming all five queues, and the scheduler's per-dispatcher
+Redis heartbeat. Scheduler heartbeats record both last success and last failure;
+an individual dispatcher is stale after 90 seconds without success. API, worker, and
+scheduler checks have a 90-second startup grace. Job checks alert on due jobs
+older than 5 minutes for email, 2 hours for YouTube, and 20 minutes for other
+queues; leases expired for over 2 minutes; or at least three failures in the last
+hour. Empty queues are healthy. The monitor logs counts each poll and serves
+Prometheus-style metrics at `monitor:9101/metrics` inside the Compose network.
+SMTP alerts fire on changes and hourly reminders while problems persist;
+recovery also sends a message. A failed SMTP send is retried on the next poll.
+
+Set `DB_MONITOR_PASSWORD` and `MONITOR_ALERT_EMAIL` in `.env`. Local defaults
+send to Mailpit; set `MONITOR_SMTP_*` to an external SMTP account for real alerts.
+On an existing PostgreSQL volume, run the documented role bootstrap before
+migration `0026_operations_monitor`. Run the monitor outside the API process;
+a same-host monitor cannot report a complete host outage, so production still
+needs an external availability check.
+
 ## Database changes
 
 Alembic is the only schema migration mechanism. Docker Compose runs the one-shot
@@ -307,11 +335,12 @@ docker compose exec postgres sh /docker-entrypoint-initdb.d/10-runtime-roles.sh
 docker compose run --rm migrate
 ```
 
-Migrations `0017_db_runtime_roles` and `0022_account_lifecycle` fail before applying grants when a role is missing,
+Migrations `0017_db_runtime_roles`, `0022_account_lifecycle`, and `0026_operations_monitor` fail before applying grants when a role is missing,
 elevated, a member of another role, or owns a database object. This is intentional: a
 misconfigured deployment must not silently fall back to the schema-owner credential.
 Compose credentials come from `.env` (start from `.env.example`); production secrets
 must be unique, URL-safe values supplied by the deployment secret store.
+See `ops/PRODUCTION.md` for the production override, SMTP, and host maintenance schedule.
 
 ## Dependency direction
 

@@ -56,6 +56,7 @@ def dispatch_email_events(
                 )
             except (ValidationError, TypeError):
                 event.state = "failed"
+                event.failed_at = now
                 event.processing_until = None
                 event.dispatch_id = None
                 event.last_error = "invalid_email_command"

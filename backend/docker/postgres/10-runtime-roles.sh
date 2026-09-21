@@ -10,6 +10,8 @@ DB_CALCULATION_WORKER_PASSWORD
 DB_EXPORT_WORKER_PASSWORD
 DB_RETENTION_WORKER_PASSWORD
 DB_LIFECYCLE_WORKER_PASSWORD
+DB_BACKUP_PASSWORD
+DB_MONITOR_PASSWORD
 "
 
 for variable_name in $required_variables; do
@@ -32,7 +34,9 @@ psql \
     --set=calculation_worker_password="$DB_CALCULATION_WORKER_PASSWORD" \
     --set=export_worker_password="$DB_EXPORT_WORKER_PASSWORD" \
     --set=retention_worker_password="$DB_RETENTION_WORKER_PASSWORD" \
-    --set=lifecycle_worker_password="$DB_LIFECYCLE_WORKER_PASSWORD" <<'SQL'
+    --set=lifecycle_worker_password="$DB_LIFECYCLE_WORKER_PASSWORD" \
+    --set=backup_password="$DB_BACKUP_PASSWORD" \
+    --set=monitor_password="$DB_MONITOR_PASSWORD" <<'SQL'
 -- POSTGRES_PASSWORD is ignored by the image when a data volume already exists.
 -- Rotating it here keeps the documented existing-volume bootstrap deterministic.
 SELECT format('ALTER ROLE %I PASSWORD %L', :'owner_role', :'owner_password')
@@ -134,6 +138,28 @@ SELECT format(
 )
 \gexec
 
+SELECT format(
+    'CREATE ROLE amp_backup LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'backup_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_backup')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_backup WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'backup_password'
+)
+\gexec
+SELECT format(
+    'CREATE ROLE amp_monitor LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'monitor_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_monitor')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_monitor WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'monitor_password'
+)
+\gexec
 SELECT format('REVOKE %I FROM %I', granted.rolname, member.rolname)
   FROM pg_auth_members AS membership
   JOIN pg_roles AS granted ON granted.oid = membership.roleid
@@ -146,7 +172,13 @@ SELECT format('REVOKE %I FROM %I', granted.rolname, member.rolname)
     'amp_calculation_worker',
     'amp_export_worker',
     'amp_retention_worker',
-    'amp_lifecycle_worker'
+    'amp_lifecycle_worker',
+    'amp_backup',
+    'amp_monitor'
  )
+\gexec
+
+GRANT pg_read_all_data TO amp_backup;
+SELECT format('GRANT CONNECT ON DATABASE %I TO amp_backup', current_database())
 \gexec
 SQL

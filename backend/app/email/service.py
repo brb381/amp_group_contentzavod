@@ -1,4 +1,3 @@
-import smtplib
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
@@ -7,6 +6,7 @@ from sqlalchemy import select
 from app.clock import utc_now
 from app.contracts import EmailDeliveryCommand
 from app.email_config import EmailWorkerSettings
+from app.smtp import send_smtp_message
 from app.outbox.models import OutboxEvent
 
 
@@ -24,12 +24,16 @@ def send_email(command: EmailDeliveryCommand, settings: EmailWorkerSettings) -> 
     message["From"] = settings.smtp_from_email
     message["To"] = str(command.recipient)
     message.set_content(command.body)
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as smtp:
-        if settings.smtp_use_tls:
-            smtp.starttls()
-        if settings.smtp_username and settings.smtp_password:
-            smtp.login(settings.smtp_username, settings.smtp_password)
-        smtp.send_message(message)
+    send_smtp_message(
+        message,
+        host=settings.smtp_host,
+        port=settings.smtp_port,
+        use_tls=settings.smtp_use_tls,
+        use_ssl=settings.smtp_use_ssl,
+        username=settings.smtp_username,
+        password=settings.smtp_password,
+        timeout=20,
+    )
 
 
 def execute_email_delivery(

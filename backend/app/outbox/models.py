@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, JSON, String, Uuid, func
+from sqlalchemy import DateTime, Index, Integer, JSON, String, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -9,6 +9,7 @@ from app.database.base import Base
 
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
+    __table_args__ = (Index("ix_outbox_events_failed_recent", "state", "failed_at"),)
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     event_type: Mapped[str] = mapped_column(String(100), index=True)
@@ -20,6 +21,7 @@ class OutboxEvent(Base):
     dispatch_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
     dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     correlation_type: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     correlation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True, index=True)
     pii_anonymized_at: Mapped[datetime | None] = mapped_column(

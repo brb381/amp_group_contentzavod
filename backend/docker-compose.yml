@@ -14,6 +14,8 @@ services:
       DB_EXPORT_WORKER_PASSWORD: ${DB_EXPORT_WORKER_PASSWORD:?DB_EXPORT_WORKER_PASSWORD is required}
       DB_RETENTION_WORKER_PASSWORD: ${DB_RETENTION_WORKER_PASSWORD:?DB_RETENTION_WORKER_PASSWORD is required}
       DB_LIFECYCLE_WORKER_PASSWORD: ${DB_LIFECYCLE_WORKER_PASSWORD:?DB_LIFECYCLE_WORKER_PASSWORD is required}
+      DB_BACKUP_PASSWORD: ${DB_BACKUP_PASSWORD:?DB_BACKUP_PASSWORD is required}
+      DB_MONITOR_PASSWORD: ${DB_MONITOR_PASSWORD:?DB_MONITOR_PASSWORD is required}
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 5s
@@ -56,6 +58,10 @@ services:
       S3_API_SECRET_KEY: ${S3_API_SECRET_KEY:?S3_API_SECRET_KEY is required}
       S3_WORKER_ACCESS_KEY: ${S3_WORKER_ACCESS_KEY:?S3_WORKER_ACCESS_KEY is required}
       S3_WORKER_SECRET_KEY: ${S3_WORKER_SECRET_KEY:?S3_WORKER_SECRET_KEY is required}
+      S3_BACKUP_ACCESS_KEY: ${S3_BACKUP_ACCESS_KEY:?S3_BACKUP_ACCESS_KEY is required}
+      S3_BACKUP_SECRET_KEY: ${S3_BACKUP_SECRET_KEY:?S3_BACKUP_SECRET_KEY is required}
+      S3_RESTORE_ACCESS_KEY: ${S3_RESTORE_ACCESS_KEY:?S3_RESTORE_ACCESS_KEY is required}
+      S3_RESTORE_SECRET_KEY: ${S3_RESTORE_SECRET_KEY:?S3_RESTORE_SECRET_KEY is required}
     volumes:
       - ./docker/minio:/config:ro
     depends_on:
@@ -85,11 +91,11 @@ services:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
     environment:
-      ENVIRONMENT: development
+      ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: postgresql+psycopg://amp_api:${DB_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      JWT_SECRET: local-development-secret-that-is-longer-than-thirty-two-bytes
-      JWT_ISSUER: amp-content-factory
-      JWT_AUDIENCE: amp-content-factory-web
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_ISSUER: ${JWT_ISSUER:-amp-content-factory}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-amp-content-factory-web}
       COOKIE_SECURE: "false"
       REDIS_URL: redis://redis:6379/0
       RATE_LIMIT_REDIS_URL: redis://redis:6379/1
@@ -121,10 +127,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://amp_email_worker:${DB_EMAIL_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
-      SMTP_HOST: mailpit
-      SMTP_PORT: "1025"
-      SMTP_USE_TLS: "false"
-      SMTP_FROM_EMAIL: no-reply@ampgroup.test
+      SMTP_HOST: ${SMTP_HOST:-mailpit}
+      SMTP_PORT: ${SMTP_PORT:-1025}
+      SMTP_USE_TLS: ${SMTP_USE_TLS:-false}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-no-reply@ampgroup.test}
+      SMTP_USE_SSL: ${SMTP_USE_SSL:-false}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -234,6 +244,39 @@ services:
       redis:
         condition: service_healthy
 
+  monitor:
+    build:
+      context: .
+      target: runtime
+    command: python -m app.monitor
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_monitor:${DB_MONITOR_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      API_READINESS_URL: http://api:8000/health/ready
+      MONITOR_ALERT_EMAIL: ${MONITOR_ALERT_EMAIL:?MONITOR_ALERT_EMAIL is required}
+      MONITOR_POLL_SECONDS: ${MONITOR_POLL_SECONDS:-30}
+      MONITOR_METRICS_PORT: "9101"
+      SMTP_HOST: ${MONITOR_SMTP_HOST:-mailpit}
+      SMTP_PORT: ${MONITOR_SMTP_PORT:-1025}
+      SMTP_USE_TLS: ${MONITOR_SMTP_USE_TLS:-false}
+      SMTP_FROM_EMAIL: ${MONITOR_SMTP_FROM_EMAIL:-no-reply@ampgroup.test}
+      SMTP_USERNAME: ${MONITOR_SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${MONITOR_SMTP_PASSWORD:-}
+      SMTP_USE_SSL: ${MONITOR_SMTP_USE_SSL:-false}
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    expose:
+      - "9101"
+
   creator-retention:
     build:
       context: .
@@ -265,6 +308,61 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  backup-local:
+    build:
+      context: .
+      dockerfile: docker/backup/Dockerfile
+    command: ["backup"]
+    profiles: ["backup"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: amp_backup
+      PGPASSWORD: ${DB_BACKUP_PASSWORD}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: private-exports
+      S3_ACCESS_KEY: ${S3_BACKUP_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_BACKUP_SECRET_KEY}
+      RESTIC_REPOSITORY: /repository
+      RESTIC_PASSWORD_FILE: /run/secrets/backup_password
+    volumes:
+      - ${AMP_BACKUP_DIR:-../../amp-backups}:/repository
+      - ${AMP_BACKUP_PASSWORD_FILE:-./.backup-password}:/run/secrets/backup_password:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+
+  backup-restore:
+    build:
+      context: .
+      dockerfile: docker/backup/Dockerfile
+    profiles: ["restore"]
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: ${POSTGRES_DB}
+      PGUSER: ${DB_MIGRATION_USER}
+      PGPASSWORD: ${DB_MIGRATION_PASSWORD}
+      S3_ENDPOINT_URL: http://minio:9000
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_BUCKET: private-exports
+      S3_ACCESS_KEY: ${S3_RESTORE_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_RESTORE_SECRET_KEY}
+      RESTIC_REPOSITORY: /repository
+      RESTIC_PASSWORD_FILE: /run/secrets/backup_password
+    volumes:
+      - ${AMP_BACKUP_DIR:-../../amp-backups}:/repository:ro
+      - ${AMP_BACKUP_PASSWORD_FILE:-./.backup-password}:/run/secrets/backup_password:ro
+    depends_on:
       postgres:
         condition: service_healthy
       minio-init:

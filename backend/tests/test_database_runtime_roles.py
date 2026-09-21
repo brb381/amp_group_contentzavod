@@ -14,6 +14,7 @@ RUNTIME_ROLES = {
     "amp_export_worker",
     "amp_retention_worker",
     "amp_lifecycle_worker",
+    "amp_monitor",
 }
 
 
@@ -255,6 +256,7 @@ def test_lifecycle_worker_can_only_expire_the_balance_claim(postgres_connection)
         "amp_calculation_worker",
         "amp_scheduler",
         "amp_lifecycle_worker",
+        "amp_monitor",
     ],
 )
 @pytest.mark.parametrize(
@@ -418,3 +420,49 @@ def test_retention_worker_has_only_bounded_account_pii_access(postgres_connectio
             ),
             {"column": column},
         )
+
+def test_backup_role_is_read_only_and_has_one_builtin_membership(postgres_connection):
+    role = postgres_connection.execute(
+        text(
+            "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+            "rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'amp_backup'"
+        )
+    ).one()
+    assert tuple(role) == (True, False, False, False, False, False)
+    memberships = postgres_connection.execute(
+        text(
+            "SELECT granted.rolname FROM pg_auth_members AS membership "
+            "JOIN pg_roles AS member ON member.oid = membership.member "
+            "JOIN pg_roles AS granted ON granted.oid = membership.roleid "
+            "WHERE member.rolname = 'amp_backup'"
+        )
+    ).scalars().all()
+    assert memberships == ["pg_read_all_data"]
+    for table in ("users", "creator_profiles", "payout_requests", "security_events", "export_jobs"):
+        assert _has_table_privilege(postgres_connection, "amp_backup", table, "SELECT")
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
+            assert not _has_table_privilege(postgres_connection, "amp_backup", table, privilege)
+
+def test_monitor_can_only_read_job_state(postgres_connection):
+    from app.monitor import JOB_SPECS
+
+    for spec in JOB_SPECS:
+        assert _has_table_privilege(postgres_connection, "amp_monitor", spec.table, "SELECT")
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+            assert not _has_table_privilege(
+                postgres_connection, "amp_monitor", spec.table, privilege
+            )
+    for table in ("payout_requests", "users", "alembic_version"):
+        assert not _has_table_privilege(postgres_connection, "amp_monitor", table, "SELECT")
+    assert postgres_connection.scalar(
+        text("SELECT has_schema_privilege('amp_monitor', 'public', 'USAGE')")
+    )
+    assert postgres_connection.scalar(
+        text("SELECT has_database_privilege('amp_monitor', current_database(), 'CONNECT')")
+    )
+    assert not postgres_connection.scalar(
+        text("SELECT has_schema_privilege('amp_monitor', 'public', 'CREATE')")
+    )
+    assert not postgres_connection.scalar(
+        text("SELECT has_database_privilege('amp_monitor', current_database(), 'TEMP')")
+    )

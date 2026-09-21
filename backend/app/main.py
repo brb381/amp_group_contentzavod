@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.exc import OperationalError
@@ -33,6 +33,7 @@ from app.api.errors import (
 )
 from app.errors import APIError
 from app.logging_config import configure_logging
+from app.health import is_ready
 
 
 def create_app() -> FastAPI:
@@ -74,6 +75,13 @@ def create_app() -> FastAPI:
     @app.get("/health/live")
     def health_live() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/health/ready")
+    def health_ready(response: Response) -> dict[str, str]:
+        if not is_ready():
+            response.status_code = 503
+            return {"status": "not_ready"}
+        return {"status": "ready"}
 
     return app
 
