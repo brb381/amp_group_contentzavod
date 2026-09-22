@@ -162,3 +162,90 @@ export async function downloadExport(id: string) {
   anchor.click()
   URL.revokeObjectURL(url)
 }
+export type JsonObject = Record<string, any>
+
+export function loadCreatorWorkspace() {
+  return Promise.all([
+    apiRequest<JsonObject>('/me/profile'),
+    apiRequest<JsonObject[]>('/me/social-accounts'),
+    apiRequest<JsonObject>('/me/video-cards?pageSize=100'),
+  ]).then(async ([profile, socialAccounts, cards]) => {
+    const publicationPages = await Promise.all(
+      (cards.items ?? []).map((card: JsonObject) =>
+        apiRequest<JsonObject>(`/me/video-cards/${card.id}/publications?pageSize=100`),
+      ),
+    )
+    return {
+      profile: profile.profile ?? null,
+      socialAccounts,
+      cards: cards.items ?? [],
+      publications: publicationPages.flatMap((page) => page.items ?? []),
+    }
+  })
+}
+
+export function saveCreatorProfile(payload: JsonObject) {
+  return apiRequest<JsonObject>('/me/profile', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function addSocialAccount(payload: JsonObject) {
+  return apiRequest<JsonObject>('/me/social-accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createVideoCard(payload: JsonObject) {
+  return apiRequest<JsonObject>('/me/video-cards', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function createPublication(cardId: string, payload: JsonObject) {
+  return apiRequest<JsonObject>(`/me/video-cards/${cardId}/publications`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export function submitPublication(publicationId: string) {
+  return apiRequest<JsonObject>(`/me/publications/${publicationId}/submissions`, {
+    method: 'POST',
+  })
+}
+
+export function createManualReading(publicationId: string, value: number) {
+  return apiRequest<JsonObject>(`/me/publications/${publicationId}/view-readings`, {
+    method: 'POST',
+    body: JSON.stringify({ value }),
+  })
+}
+
+export function reviewProfile(profileId: string, decision: string, reason?: string) {
+  return apiRequest<JsonObject>(`/moderation/profiles/${profileId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, reason: reason || null }),
+  })
+}
+
+export function reviewPublication(publicationId: string, decision: string, reason?: string) {
+  return apiRequest<JsonObject>(`/moderation/publications/${publicationId}/reviews`, {
+    method: 'POST',
+    body: JSON.stringify({ decision, reason: reason || null }),
+  })
+}
+
+export function reviewReading(readingId: string, decision: string, reason?: string, acceptedValue?: number) {
+  return apiRequest<JsonObject>(`/moderation/view-readings/${readingId}/decisions`, {
+    method: 'POST',
+    body: JSON.stringify({
+      decision,
+      reason: reason || null,
+      accepted_value: decision === 'correct' ? acceptedValue : null,
+    }),
+  })
+}

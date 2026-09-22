@@ -1,13 +1,15 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, ReactNode, useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, ArrowRight, BarChart3, Bell, Check, CircleDollarSign, Download,
   Eye, FileSpreadsheet, Gauge, HelpCircle, LayoutDashboard, LoaderCircle,
   LockKeyhole, LogOut, Menu, MessageSquareText, RefreshCw, Search, Settings,
-  SlidersHorizontal, UsersRound, Video, WalletCards, WifiOff, X,
+  SlidersHorizontal, UsersRound, Video, WalletCards, WifiOff, X, Plus, Save, Link2, ClipboardCheck,
 } from 'lucide-react'
 import {
   ApiError, CurrentUser, PageId, PagePayload, Role, downloadExport,
-  getCurrentUser, loadPage, login, logout,
+  getCurrentUser, loadPage, login, logout, addSocialAccount, createManualReading, createPublication,
+  createVideoCard, loadCreatorWorkspace, reviewProfile, reviewPublication, reviewReading,
+  saveCreatorProfile, submitPublication,
 } from './api'
 
 type Tone = 'red' | 'amber' | 'green' | 'blue' | 'gray'
@@ -245,8 +247,8 @@ function Table({ rows, query, page, action }: { rows: Row[]; query: string; page
   return <div className="table-wrap"><table><thead><tr><th>Название</th><th>Статус</th><th>Дата</th><th>Показатель</th><th /></tr></thead><tbody>{filtered.map((item, index) => <tr key={item.id} onClick={() => action(item)}><td><div className="entity">{page === 'publications' ? <MediaThumb index={index % 4} /> : <Avatar value={item.initials} />}<div><strong>{item.title}</strong><span>{item.id} · {item.meta}</span></div></div></td><td><Badge value={item.status} color={item.tone} /></td><td className="muted">{item.date}</td><td><strong className="cell-value">{item.value}</strong></td><td><button className="row-action">{page === 'exports' && item.rawStatus === 'ready' ? <Download size={16} /> : <ArrowRight size={18} />}</button></td></tr>)}</tbody></table>{!filtered.length ? <div className="empty"><Search size={24} /><strong>Данных пока нет</strong><span>{query ? 'Измените поисковый запрос' : 'Backend вернул пустой список'}</span></div> : null}</div>
 }
 
-function Overview({ data, role, query, loading, error, reload }: {
-  data: PagePayload | null; role: Role; query: string; loading: boolean; error: string; reload: () => void;
+function Overview({ data, role, query, loading, error, reload, openProfile }: {
+  data: PagePayload | null; role: Role; query: string; loading: boolean; error: string; reload: () => void; openProfile: () => void;
 }) {
   const source = (data ?? {}) as Json
   const overview = source.overview ?? {}
@@ -264,19 +266,21 @@ function Overview({ data, role, query, loading, error, reload }: {
     ['Выплаты в работе', rubles(overview.payouts_in_progress_kopecks), rubles(overview.available_balance_kopecks) + ' доступно', 'red', CircleDollarSign],
   ]
   return <>
-    <PageHeading title="Рабочий стол" subtitle={blogger ? 'Результаты контента и ближайшие действия.' : 'Операционные показатели и очереди команды.'} role={role} loading={loading} reload={reload} />
+    <PageHeading title="Рабочий стол" subtitle={blogger ? 'Результаты контента и ближайшие действия.' : 'Операционные показатели и очереди команды.'} role={role} loading={loading} reload={reload} actionLabel={blogger ? 'Профиль' : undefined} action={blogger ? openProfile : undefined} />
     <RequestState loading={loading} error={error} retry={reload} />
     {!error && !loading ? <><section className="stats-grid">{stats.map(([label, value, note, color, icon]) => <Stat key={label as string} label={label as string} value={value as string} note={note as string} color={color as string} icon={icon as typeof UsersRound} />)}</section><div className="content-grid"><section className="panel queue-panel"><div className="panel__head"><div><h2>{blogger ? 'Лучшие ролики' : 'Очередь работы'}</h2><p>Данные backend в реальном времени</p></div><Badge value={String(rows.length)} color="blue" /></div><Table rows={rows} query={query} page="overview" action={() => {}} /></section><aside className="attention"><div className="attention__head"><div><AlertTriangle size={18} /><h2>Состояние</h2></div></div><div className="attention-item attention-item--static"><span className="risk-icon risk-icon--amber"><Gauge size={17} /></span><span><strong>{rows.length} активных очередей</strong><small>Требуют обработки</small></span></div><div className="system-status"><span><i />API подключён</span><small>Данные получены после загрузки</small></div></aside></div></> : null}
   </>
 }
-function PageHeading({ title, subtitle, role, loading, reload }: { title: string; subtitle: string; role: Role; loading: boolean; reload: () => void }) {
-  return <div className="page-heading"><div><p className="eyebrow">{roleLabels[role]}</p><h1>{title}</h1><p>{subtitle}</p></div><button className="button button--primary" onClick={reload} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />Обновить</button></div>
+function PageHeading({ title, subtitle, role, loading, reload, actionLabel, action }: {
+  title: string; subtitle: string; role: Role; loading: boolean; reload: () => void; actionLabel?: string; action?: () => void;
+}) {
+  return <div className="page-heading"><div><p className="eyebrow">{roleLabels[role]}</p><h1>{title}</h1><p>{subtitle}</p></div><div className="heading-actions">{actionLabel && action ? <button className="button button--primary" onClick={action}><Plus size={17} />{actionLabel}</button> : null}<button className="button button--secondary" onClick={reload} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={17} />Обновить</button></div></div>
 }
-function ListPage({ page, role, rows, query, loading, error, reload, action }: {
-  page: PageId; role: Role; rows: Row[]; query: string; loading: boolean; error: string; reload: () => void; action: (row: Row) => void;
+function ListPage({ page, role, rows, query, loading, error, reload, action, primaryLabel, primaryAction }: {
+  page: PageId; role: Role; rows: Row[]; query: string; loading: boolean; error: string; reload: () => void; action: (row: Row) => void; primaryLabel?: string; primaryAction?: () => void;
 }) {
   const [title, subtitle] = pageMeta[page]
-  return <><PageHeading title={role === 'blogger' && page === 'publications' ? 'Мои ролики' : title} subtitle={subtitle} role={role} loading={loading} reload={reload} /><RequestState loading={loading} error={error} retry={reload} />{!error && !loading ? <section className="panel list-panel"><div className="list-toolbar"><div className="local-search"><Search size={17} /><span>{query ? 'Поиск: ' + query : 'Записей: ' + rows.length}</span></div><button className="button button--secondary" disabled><SlidersHorizontal size={17} />Фильтры</button></div><Table rows={rows} query={query} page={page} action={action} /><div className="pagination"><span>Показано {rows.length}</span><div><button disabled>Назад</button><button disabled>Дальше</button></div></div></section> : null}</>
+  return <><PageHeading title={role === 'blogger' && page === 'publications' ? 'Мои ролики' : title} subtitle={subtitle} role={role} loading={loading} reload={reload} actionLabel={primaryLabel} action={primaryAction} /><RequestState loading={loading} error={error} retry={reload} />{!error && !loading ? <section className="panel list-panel"><div className="list-toolbar"><div className="local-search"><Search size={17} /><span>{query ? 'Поиск: ' + query : 'Записей: ' + rows.length}</span></div><button className="button button--secondary" disabled><SlidersHorizontal size={17} />Фильтры</button></div><Table rows={rows} query={query} page={page} action={action} /><div className="pagination"><span>Показано {rows.length}</span><div><button disabled>Назад</button><button disabled>Дальше</button></div></div></section> : null}</>
 }
 function Analytics({ data, loading, error, reload, role }: { data: PagePayload | null; loading: boolean; error: string; reload: () => void; role: Role }) {
   const source = (data ?? {}) as Json
@@ -298,6 +302,141 @@ function Login({ signedIn }: { signedIn: (user: CurrentUser) => void }) {
   return <main className="auth-page"><section className="auth-panel"><div className="auth-brand"><div className="brand__mark"><span>A</span></div><div><strong>AMP</strong><span>Content Factory</span></div></div><div className="auth-copy"><h1>Вход в кабинет</h1><p>Используйте почту и пароль аккаунта.</p></div><form className="auth-form" onSubmit={submit}><label><span>Email</span><input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@ampgroup.ru" /></label><label><span>Пароль</span><input type="password" autoComplete="current-password" required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Введите пароль" /></label>{error ? <div className="auth-error"><AlertTriangle size={16} />{error}</div> : null}<button className="button button--primary auth-submit" disabled={pending}>{pending ? <LoaderCircle className="spin" size={18} /> : <LockKeyhole size={18} />}{pending ? 'Входим' : 'Войти'}</button></form><div className="auth-status"><span><i />Защищённая cookie-сессия</span><small>Пароль не хранится в браузере</small></div></section><aside className="auth-visual"><div className="auth-visual__content"><span>Контент-завод</span><strong>От публикации<br />до выплаты</strong><p>Единое рабочее пространство AMP Group</p></div></aside></main>
 }
 
+type WorkKind = 'profile' | 'content' | 'reading' | 'moderate-profile' | 'moderate-publication' | 'moderate-reading'
+type WorkState = { kind: WorkKind; item?: Row } | null
+
+const workTitles: Record<WorkKind, [string, string]> = {
+  profile: ['Профиль блогера', 'Контактные данные и площадки'],
+  content: ['Новый ролик', 'Карточка и ссылка на публикацию'],
+  reading: ['Добавить показание', 'Ручное значение просмотров'],
+  'moderate-profile': ['Решение по профилю', 'Проверка данных блогера'],
+  'moderate-publication': ['Решение по публикации', 'Проверка ссылки и материала'],
+  'moderate-reading': ['Решение по показанию', 'Проверка значения просмотров'],
+}
+
+function Field({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
+  return <label className={wide ? 'form-field form-field--wide' : 'form-field'}><span>{label}</span>{children}</label>
+}
+
+function WorkDrawer({ state, close, completed }: {
+  state: Exclude<WorkState, null>; close: () => void; completed: (message: string) => void;
+}) {
+  const [workspace, setWorkspace] = useState<Json | null>(null)
+  const [loading, setLoading] = useState(['profile', 'content', 'reading'].includes(state.kind))
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState('')
+  const [decision, setDecision] = useState(state.kind === 'moderate-reading' ? 'accept' : 'approve')
+  useEffect(() => {
+    if (!['profile', 'content', 'reading'].includes(state.kind)) return
+    loadCreatorWorkspace().then(setWorkspace).catch((caught) => {
+      setError(caught instanceof ApiError ? caught.message : 'Не удалось получить данные')
+    }).finally(() => setLoading(false))
+  }, [state.kind])
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setPending(true); setError('')
+    const form = new FormData(event.currentTarget)
+    const value = (name: string) => String(form.get(name) ?? '').trim()
+    try {
+      if (state.kind === 'profile') {
+        if (profileEditable) await saveCreatorProfile({
+          full_name: value('full_name') || null, display_name: value('display_name') || null,
+          phone: value('phone') || null, telegram: value('telegram') || null,
+          city_country: value('city_country') || null, content_topics: value('content_topics') || null,
+          recipient_status: value('recipient_status') || null,
+        })
+        if (value('social_url')) await addSocialAccount({
+          platform: value('platform'), url: value('social_url'),
+          follower_count: value('followers') ? Number(value('followers')) : null,
+        })
+        return completed('Профиль сохранён')
+      }
+      if (state.kind === 'content') {
+        const card = await createVideoCard({
+          title: value('title'), description: value('description') || null,
+          product: { type: 'unlisted', brand: value('brand'), name: value('product_name') },
+        })
+        if (value('publication_url')) {
+          if (!value('social_account_id')) throw new Error('Добавьте или выберите социальный аккаунт')
+          const publication = await createPublication(card.id, {
+            social_account_id: value('social_account_id'), url: value('publication_url'),
+          })
+          await submitPublication(publication.publication?.id ?? publication.id)
+        }
+        return completed(value('publication_url') ? 'Ролик отправлен на модерацию' : 'Карточка ролика создана')
+      }
+      if (state.kind === 'reading') {
+        await createManualReading(value('publication_id'), Number(value('reading_value')))
+        return completed('Показание добавлено')
+      }
+      const reason = value('reason')
+      if (state.kind === 'moderate-profile') await reviewProfile(state.item!.rawId!, decision, reason)
+      else if (state.kind === 'moderate-publication') await reviewPublication(state.item!.rawId!, decision, reason)
+      else await reviewReading(state.item!.rawId!, decision, reason, value('accepted_value') ? Number(value('accepted_value')) : undefined)
+      completed('Решение сохранено')
+    } catch (caught) {
+      setError(caught instanceof ApiError || caught instanceof Error ? caught.message : 'Не удалось сохранить изменения')
+    } finally { setPending(false) }
+  }
+
+  const [title, subtitle] = workTitles[state.kind]
+  const profile = workspace?.profile ?? {}
+  const accounts: Json[] = workspace?.socialAccounts ?? []
+  const profileEditable = !profile.status || ['draft', 'submitted', 'in_review', 'rejected'].includes(profile.status)
+  const publications: Json[] = (workspace?.publications ?? []).filter((item: Json) => item.status === 'approved')
+  const moderation = state.kind.startsWith('moderate-')
+  const negative = ['reject', 'request_changes', 'suspend', 'block', 'correct'].includes(decision)
+  return <div className="drawer-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}>
+    <aside className="work-drawer" role="dialog" aria-modal="true" aria-labelledby="work-title">
+      <header className="work-drawer__head"><div><h2 id="work-title">{title}</h2><p>{subtitle}</p></div><button type="button" className="icon-button" onClick={close} title="Закрыть"><X size={19} /></button></header>
+      {loading ? <div className="drawer-loading"><LoaderCircle className="spin" size={20} />Загружаем данные</div> :
+      <form className="work-form" onSubmit={submit}>
+        {state.item ? <div className="drawer-entity"><Avatar value={state.item.initials} /><span><strong>{state.item.title}</strong><small>{state.item.meta}</small></span><Badge value={state.item.status} color={state.item.tone} /></div> : null}
+        {state.kind === 'profile' ? <>
+          <section className="form-section"><h3>Основные данные</h3>{!profileEditable ? <div className="inline-note">Одобренный профиль доступен только для чтения. Новую площадку можно добавить ниже.</div> : null}<fieldset className="form-grid" disabled={!profileEditable}>
+            <Field label="ФИО"><input name="full_name" defaultValue={profile.full_name ?? ''} required /></Field>
+            <Field label="Публичное имя"><input name="display_name" defaultValue={profile.display_name ?? ''} required /></Field>
+            <Field label="Телефон"><input name="phone" defaultValue={profile.phone ?? ''} /></Field>
+            <Field label="Telegram"><input name="telegram" defaultValue={profile.telegram ?? ''} /></Field>
+            <Field label="Город и страна"><input name="city_country" defaultValue={profile.city_country ?? ''} /></Field>
+            <Field label="Статус получателя"><select name="recipient_status" defaultValue={profile.recipient_status ?? 'self_employed'}><option value="self_employed">Самозанятый</option><option value="individual">Физлицо</option></select></Field>
+            <Field label="Темы контента" wide><textarea name="content_topics" defaultValue={profile.content_topics ?? ''} rows={3} /></Field>
+          </fieldset></section>
+          <section className="form-section"><h3><Link2 size={16} />Добавить площадку</h3><div className="form-grid">
+            <Field label="Платформа"><select name="platform" defaultValue="vk"><option value="vk">VK</option><option value="youtube">YouTube</option><option value="tiktok">TikTok</option><option value="dzen">Дзен</option><option value="rutube">Rutube</option></select></Field>
+            <Field label="Подписчики"><input name="followers" type="number" min="0" placeholder="0" /></Field>
+            <Field label="Ссылка" wide><input name="social_url" type="url" placeholder="https://vk.com/..." /></Field>
+          </div>{accounts.length ? <div className="account-list">{accounts.map((item) => <span key={item.id}><b>{item.platform}</b><em>{item.url}</em><Badge value={statusLabels[item.status] ?? item.status} color={tone(item.status)} /></span>)}</div> : null}</section>
+        </> : null}
+        {state.kind === 'content' ? <>
+          <section className="form-section"><h3>Карточка ролика</h3><div className="form-grid">
+            <Field label="Название" wide><input name="title" required maxLength={255} /></Field>
+            <Field label="Бренд"><select name="brand"><option value="AMP">AMP</option><option value="AirTone">AirTone</option><option value="CrioLight">CrioLight</option></select></Field>
+            <Field label="Продукт"><input name="product_name" required /></Field>
+            <Field label="Описание" wide><textarea name="description" rows={4} /></Field>
+          </div></section>
+          <section className="form-section"><h3>Публикация</h3><p className="form-hint">Ссылку можно оставить пустой и сохранить только карточку.</p><div className="form-grid">
+            <Field label="Социальный аккаунт" wide><select name="social_account_id" defaultValue=""><option value="">Выберите аккаунт</option>{accounts.filter((item) => item.status === 'approved').map((item) => <option value={item.id} key={item.id}>{item.platform}: {item.url}</option>)}</select></Field>
+            <Field label="Ссылка на публикацию" wide><input name="publication_url" type="url" placeholder="https://..." /></Field>
+          </div></section>
+        </> : null}
+        {state.kind === 'reading' ? <section className="form-section"><h3>Данные площадки</h3><div className="form-grid">
+          <Field label="Публикация" wide><select name="publication_id" required defaultValue=""><option value="" disabled>Выберите одобренную публикацию</option>{publications.map((item) => <option value={item.id} key={item.id}>{item.external_title || item.submitted_url}</option>)}</select></Field>
+          <Field label="Текущее число просмотров" wide><input name="reading_value" type="number" min="0" required /></Field>
+        </div>{!publications.length ? <div className="inline-note">Сначала нужна одобренная публикация.</div> : null}</section> : null}
+        {moderation ? <section className="form-section"><h3><ClipboardCheck size={16} />Решение</h3><div className="decision-grid">
+          {state.kind === 'moderate-profile' ? <select value={decision} onChange={(e) => setDecision(e.target.value)}><option value="approve">Одобрить</option><option value="start_review">Взять в работу</option><option value="reject">Отклонить</option><option value="suspend">Приостановить</option></select> : null}
+          {state.kind === 'moderate-publication' ? <select value={decision} onChange={(e) => setDecision(e.target.value)}><option value="approve">Одобрить</option><option value="request_changes">Вернуть на исправление</option><option value="reject">Отклонить</option></select> : null}
+          {state.kind === 'moderate-reading' ? <select value={decision} onChange={(e) => setDecision(e.target.value)}><option value="accept">Принять</option><option value="correct">Исправить</option><option value="reject">Отклонить</option></select> : null}
+          {decision === 'correct' ? <Field label="Принятое значение"><input name="accepted_value" type="number" min="0" required /></Field> : null}
+          <Field label={negative ? 'Причина (обязательно)' : 'Комментарий'} wide><textarea name="reason" rows={4} required={negative} /></Field>
+        </div></section> : null}
+        {error ? <div className="auth-error"><AlertTriangle size={16} />{error}</div> : null}
+        <footer className="work-form__actions"><button type="button" className="button button--secondary" onClick={close}>Отмена</button><button className="button button--primary" disabled={pending || (state.kind === 'reading' && !publications.length)}>{pending ? <LoaderCircle className="spin" size={17} /> : moderation ? <ClipboardCheck size={17} /> : <Save size={17} />}{pending ? 'Сохраняем' : moderation ? 'Сохранить решение' : 'Сохранить'}</button></footer>
+      </form>}
+    </aside>
+  </div>
+}
 function Cabinet({ user, signedOut }: { user: CurrentUser; signedOut: () => void }) {
   const allowed = rolePages[user.role]
   const hash = window.location.hash.slice(1) as PageId
@@ -305,7 +444,7 @@ function Cabinet({ user, signedOut }: { user: CurrentUser; signedOut: () => void
   const [menu, setMenu] = useState(false); const [query, setQuery] = useState('')
   const [data, setData] = useState<PagePayload | null>(null); const [loading, setLoading] = useState(true)
   const [error, setError] = useState(''); const [reloadKey, setReloadKey] = useState(0)
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState(''); const [work, setWork] = useState<WorkState>(null)
   useEffect(() => {
     let cancelled = false; setLoading(true); setError('')
     loadPage(user.role, page).then((value) => { if (!cancelled) setData(value) }).catch((caught) => {
@@ -318,16 +457,29 @@ function Cabinet({ user, signedOut }: { user: CurrentUser; signedOut: () => void
   const rows = useMemo(() => rowsFrom(data, page, user.role), [data, page, user.role])
   const reload = () => setReloadKey((value) => value + 1)
   const notify = (value: string) => { setToast(value); window.setTimeout(() => setToast(''), 2400) }
+  const completeWork = (message: string) => { setWork(null); notify(message); reload() }
   const action = async (item: Row) => {
-    if (page !== 'exports') return notify(item.title)
-    if (item.rawStatus !== 'ready' || !item.rawId) return notify('Выгрузка ещё не готова')
-    try { await downloadExport(item.rawId); notify('Скачивание началось') }
-    catch (caught) { notify(caught instanceof ApiError ? caught.message : 'Не удалось скачать файл') }
+    if (page === 'exports') {
+      if (item.rawStatus !== 'ready' || !item.rawId) return notify('Выгрузка ещё не готова')
+      try { await downloadExport(item.rawId); notify('Скачивание началось') }
+      catch (caught) { notify(caught instanceof ApiError ? caught.message : 'Не удалось скачать файл') }
+      return
+    }
+    if (!item.rawId) return notify(item.title)
+    if (page === 'moderation') return setWork({ kind: item.id.startsWith('profile-') ? 'moderate-profile' : 'moderate-publication', item })
+    if (page === 'creators' && user.role === 'moderator') return setWork({ kind: 'moderate-profile', item })
+    if (page === 'publications' && ['moderator', 'admin'].includes(user.role)) return setWork({ kind: 'moderate-publication', item })
+    if (page === 'readings' && user.role !== 'blogger') return setWork({ kind: 'moderate-reading', item })
+    notify(item.title)
   }
+  const primary = user.role === 'blogger' && page === 'publications'
+    ? { label: 'Новый ролик', run: () => setWork({ kind: 'content' as const }) }
+    : user.role === 'blogger' && page === 'readings'
+      ? { label: 'Добавить показание', run: () => setWork({ kind: 'reading' as const }) }
+      : null
   const signOut = async () => { try { await logout() } finally { signedOut() } }
-  return <div className="app-shell"><Sidebar page={page} user={user} open={menu} navigate={(next) => { setPage(next); setData(null); setQuery(''); window.history.replaceState(null, '', '#' + next) }} close={() => setMenu(false)} signOut={signOut} /><div className="workspace"><Header menu={() => setMenu(true)} query={query} setQuery={setQuery} /><main>{page === 'overview' ? <Overview data={data} role={user.role} query={query} loading={loading} error={error} reload={reload} /> : page === 'analytics' ? <Analytics data={data} role={user.role} loading={loading} error={error} reload={reload} /> : <ListPage page={page} role={user.role} rows={rows} query={query} loading={loading} error={error} reload={reload} action={action} />}</main></div>{toast ? <div className="toast"><Check size={18} /><span>{toast}</span><button onClick={() => setToast('')}><X size={16} /></button></div> : null}</div>
+  return <div className="app-shell"><Sidebar page={page} user={user} open={menu} navigate={(next) => { setPage(next); setData(null); setQuery(''); window.history.replaceState(null, '', '#' + next) }} close={() => setMenu(false)} signOut={signOut} /><div className="workspace"><Header menu={() => setMenu(true)} query={query} setQuery={setQuery} /><main>{page === 'overview' ? <Overview data={data} role={user.role} query={query} loading={loading} error={error} reload={reload} openProfile={() => setWork({ kind: 'profile' })} /> : page === 'analytics' ? <Analytics data={data} role={user.role} loading={loading} error={error} reload={reload} /> : <ListPage page={page} role={user.role} rows={rows} query={query} loading={loading} error={error} reload={reload} action={action} primaryLabel={primary?.label} primaryAction={primary?.run} />}</main></div>{work ? <WorkDrawer state={work} close={() => setWork(null)} completed={completeWork} /> : null}{toast ? <div className="toast"><Check size={18} /><span>{toast}</span><button onClick={() => setToast('')}><X size={16} /></button></div> : null}</div>
 }
-
 export function App() {
   const [user, setUser] = useState<CurrentUser | null>(null)
   const [checking, setChecking] = useState(true)
