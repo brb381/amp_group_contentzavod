@@ -1,7 +1,6 @@
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from celery import Celery
 from sqlalchemy import select
@@ -19,6 +18,7 @@ from app.database.factory import create_session_factory
 from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.scheduler_config import get_scheduler_settings
+from app.readings.view_slots import current_view_collection_slot
 from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
 
 
@@ -27,7 +27,6 @@ settings = get_scheduler_settings()
 SessionLocal = create_session_factory(settings.database_url)
 producer = Celery("amp_vk_scheduler", broker=settings.redis_url)
 VK_LEASE = timedelta(minutes=5)
-MOSCOW = ZoneInfo("Europe/Moscow")
 
 
 def _aware(value: datetime) -> datetime:
@@ -149,30 +148,26 @@ def dispatch_vk_enrichment(
 
 
 def _create_view_jobs(db, now: datetime) -> None:
-    local = now.astimezone(MOSCOW)
-    if local.day < 25 or local.hour < settings.vk_collection_hour_moscow:
-        return
-    collection_date = local.date()
-    existing = set(
-        db.scalars(
-            select(VKViewCollectionJob.publication_id).where(
-                VKViewCollectionJob.collection_date == collection_date
-            )
-        )
-    )
+    slot = current_view_collection_slot(now)
+
     publications = db.scalars(
         select(Publication).where(
             Publication.platform == Platform.VK,
             Publication.status == PublicationStatus.APPROVED,
             Publication.deleted_at.is_(None),
-            Publication.id.notin_(existing) if existing else True,
+            ~select(VKViewCollectionJob.id).where(
+                VKViewCollectionJob.publication_id == Publication.id,
+                VKViewCollectionJob.collection_date == slot.collection_date,
+                VKViewCollectionJob.collection_slot == slot.index,
+            ).exists(),
         )
     )
     for publication in publications:
         db.add(
             VKViewCollectionJob(
                 publication_id=publication.id,
-                collection_date=collection_date,
+                collection_date=slot.collection_date,
+                collection_slot=slot.index,
                 available_at=now,
             )
         )

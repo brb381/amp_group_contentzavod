@@ -35,8 +35,6 @@ from app.errors import APIError
 from app.notifications.models import NotificationSeverity
 from app.notifications.service import NotificationCommand, create_notification
 from app.platforms import Platform
-from app.readings.models import YouTubeViewCollectionJob
-from app.readings.policy import MOSCOW
 
 
 REVIEWER_ROLES = {Role.MODERATOR, Role.ADMIN}
@@ -320,27 +318,6 @@ def review_publication(
     publication.moderation_reason = payload.reason if target != PublicationStatus.APPROVED else None
     publication.reviewed_at = now
     publication.updated_at = now
-    if (
-        target == PublicationStatus.APPROVED
-        and publication.platform == Platform.YOUTUBE
-        and publication.external_id
-    ):
-        collection_date = now.astimezone(MOSCOW).date()
-        baseline_job = db.scalar(
-            select(YouTubeViewCollectionJob).where(
-                YouTubeViewCollectionJob.publication_id == publication.id,
-                YouTubeViewCollectionJob.collection_date == collection_date,
-            )
-        )
-        if not baseline_job:
-            db.add(
-                YouTubeViewCollectionJob(
-                    publication_id=publication.id,
-                    external_id=publication.external_id,
-                    collection_date=collection_date,
-                    available_at=now,
-                )
-            )
     if changed_product:
         card.updated_at = now
     changes = (

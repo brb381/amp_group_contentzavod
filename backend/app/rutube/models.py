@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, Uuid, func
+from sqlalchemy import CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, SmallInteger, String, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -41,11 +41,16 @@ class RutubeViewCollectionJob(Base):
     __tablename__ = "rutube_view_collection_jobs"
     __table_args__ = (
         UniqueConstraint(
-            "publication_id", "collection_date", name="uq_rutube_view_job_publication_date"
+            "publication_id", "collection_date", "collection_slot",
+            name="uq_rutube_view_job_publication_date_slot",
         ),
         CheckConstraint(
             "state IN ('pending', 'queued', 'processing', 'retry_wait', 'succeeded', 'failed')",
             name="ck_rutube_view_collection_jobs_state",
+        ),
+        CheckConstraint(
+            "collection_slot >= 0 AND collection_slot < 12",
+            name="ck_rutube_view_collection_jobs_slot",
         ),
         Index("ix_rutube_view_collection_jobs_due", "state", "available_at", "created_at"),
     )
@@ -55,6 +60,7 @@ class RutubeViewCollectionJob(Base):
         ForeignKey("publications.id", ondelete="RESTRICT"), nullable=False
     )
     collection_date: Mapped[date] = mapped_column(Date, nullable=False)
+    collection_slot: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(

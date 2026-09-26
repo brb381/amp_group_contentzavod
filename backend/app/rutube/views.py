@@ -13,6 +13,7 @@ from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.readings.models import ReadingSource, ReadingStatus, ViewReading, ViewReadingHistory
 from app.readings.policy import risk_flags
+from app.readings.view_slots import view_reading_idempotency_key
 from app.readings.revision import lock_reading_dataset_revision
 from app.rutube.client import RutubeClient, RutubeClientError
 from app.rutube.models import RutubeViewCollectionJob
@@ -143,7 +144,7 @@ def _apply_success(
                 job.state = "failed"
                 job.last_error_code = "reading_period_financially_closed"
             else:
-                key = f"rutube-public:{job.collection_date.isoformat()}"
+                key = view_reading_idempotency_key("rutube-public", job.collection_date, job.collection_slot)
                 reading = db.scalar(
                     select(ViewReading).where(
                         ViewReading.publication_id == publication.id,

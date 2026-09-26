@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     JSON,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -128,10 +129,17 @@ class ViewReadingHistory(Base):
 class YouTubeViewCollectionJob(Base):
     __tablename__ = "youtube_view_collection_jobs"
     __table_args__ = (
-        UniqueConstraint("publication_id", "collection_date", name="uq_youtube_view_job_publication_date"),
+        UniqueConstraint(
+            "publication_id", "collection_date", "collection_slot",
+            name="uq_youtube_view_job_publication_date_slot",
+        ),
         CheckConstraint(
             "state IN ('pending', 'queued', 'processing', 'retry_wait', 'succeeded', 'failed')",
             name="ck_youtube_view_collection_job_state",
+        ),
+        CheckConstraint(
+            "collection_slot >= 0 AND collection_slot < 12",
+            name="ck_youtube_view_collection_job_slot",
         ),
         Index("ix_youtube_view_collection_jobs_due", "state", "available_at", "created_at"),
     )
@@ -142,6 +150,7 @@ class YouTubeViewCollectionJob(Base):
     )
     external_id: Mapped[str] = mapped_column(String(255), nullable=False)
     collection_date: Mapped[date] = mapped_column(Date, nullable=False)
+    collection_slot: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=0)
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     attempt_count: Mapped[int] = mapped_column(nullable=False, default=0)
     available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

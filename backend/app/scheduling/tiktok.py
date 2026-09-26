@@ -1,7 +1,6 @@
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from celery import Celery
 from sqlalchemy import select
@@ -19,6 +18,7 @@ from app.database.factory import create_session_factory
 from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.scheduler_config import get_scheduler_settings
+from app.readings.view_slots import current_view_collection_slot
 from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
 
 
@@ -27,7 +27,6 @@ settings = get_scheduler_settings()
 SessionLocal = create_session_factory(settings.database_url)
 producer = Celery("amp_tiktok_scheduler", broker=settings.redis_url)
 TIKTOK_LEASE = timedelta(minutes=5)
-MOSCOW = ZoneInfo("Europe/Moscow")
 
 
 def _aware(value: datetime) -> datetime:
@@ -149,30 +148,26 @@ def dispatch_tiktok_enrichment(
 
 
 def _create_view_jobs(db, now: datetime) -> None:
-    local = now.astimezone(MOSCOW)
-    if local.day < 25 or local.hour < settings.tiktok_collection_hour_moscow:
-        return
-    collection_date = local.date()
-    existing = set(
-        db.scalars(
-            select(TikTokViewCollectionJob.publication_id).where(
-                TikTokViewCollectionJob.collection_date == collection_date
-            )
-        )
-    )
+    slot = current_view_collection_slot(now)
+
     publications = db.scalars(
         select(Publication).where(
             Publication.platform == Platform.TIKTOK,
             Publication.status == PublicationStatus.APPROVED,
             Publication.deleted_at.is_(None),
-            Publication.id.notin_(existing) if existing else True,
+            ~select(TikTokViewCollectionJob.id).where(
+                TikTokViewCollectionJob.publication_id == Publication.id,
+                TikTokViewCollectionJob.collection_date == slot.collection_date,
+                TikTokViewCollectionJob.collection_slot == slot.index,
+            ).exists(),
         )
     )
     for publication in publications:
         db.add(
             TikTokViewCollectionJob(
                 publication_id=publication.id,
-                collection_date=collection_date,
+                collection_date=slot.collection_date,
+                collection_slot=slot.index,
                 available_at=now,
             )
         )

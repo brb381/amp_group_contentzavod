@@ -1,5 +1,5 @@
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from pydantic import SecretStr
@@ -571,6 +571,12 @@ def test_approval_can_atomically_resolve_product_and_rejects_repeated_decision(c
     assert approved.json()["history"][0]["changes"] == {
         "resolved_product_id": str(product.id)
     }
+    baseline_producer = CapturingProducer()
+    assert dispatch_youtube_view_batch(
+        session_factory=client.app.state.test_session,
+        task_producer=baseline_producer,
+    ) is True
+    assert baseline_producer.messages[0]["queue"] == "youtube"
     with client.app.state.test_session() as db:
         baseline_job = db.scalar(
             select(YouTubeViewCollectionJob).where(
@@ -1324,7 +1330,7 @@ def test_manual_view_reading_can_be_edited_and_corrected(client, monkeypatch):
     assert recorrected.json()["accepted_value"] == 114000
 
 
-def test_youtube_view_scheduler_and_worker_store_daily_reading(client):
+def test_youtube_view_scheduler_and_worker_store_two_hour_readings(client):
     blogger = create_blogger(client, "automatic-reading@example.com")
     account = create_social_account(client, blogger.id)
     login(client, blogger.email)
@@ -1342,7 +1348,7 @@ def test_youtube_view_scheduler_and_worker_store_daily_reading(client):
 
     producer = CapturingProducer()
     session_factory = client.app.state.test_session
-    collection_time = datetime(2026, 8, 25, 20, 5, tzinfo=timezone.utc)
+    collection_time = datetime(2026, 8, 10, 10, 5, tzinfo=timezone.utc)
     assert dispatch_youtube_view_batch(
         now=collection_time,
         session_factory=session_factory,
@@ -1382,14 +1388,38 @@ def test_youtube_view_scheduler_and_worker_store_daily_reading(client):
         client=ViewClient(),
     )
 
+    next_producer = CapturingProducer()
+    assert dispatch_youtube_view_batch(
+        now=collection_time + timedelta(hours=2),
+        session_factory=session_factory,
+        task_producer=next_producer,
+    ) is True
+    next_command = YouTubeViewCollectionCommand.model_validate(
+        next_producer.messages[0]["args"][0]
+    )
+    execute_youtube_view_collection(
+        next_command,
+        worker_settings,
+        session_factory,
+        client=ViewClient(),
+    )
+
     with session_factory() as db:
-        readings = list(db.scalars(select(ViewReading)))
-        job = db.scalar(select(YouTubeViewCollectionJob))
-        assert len(readings) == 1
-        assert readings[0].reported_value == 987654
-        assert readings[0].accepted_value == 987654
-        assert readings[0].status == ReadingStatus.ACCEPTED
-        assert job.state == "succeeded"
+        readings = list(db.scalars(select(ViewReading).order_by(ViewReading.captured_at)))
+        jobs = list(
+            db.scalars(
+                select(YouTubeViewCollectionJob).order_by(
+                    YouTubeViewCollectionJob.collection_date,
+                    YouTubeViewCollectionJob.collection_slot,
+                )
+            )
+        )
+        assert len(readings) == 2
+        assert all(reading.reported_value == 987654 for reading in readings)
+        assert all(reading.accepted_value == 987654 for reading in readings)
+        assert all(reading.status == ReadingStatus.ACCEPTED for reading in readings)
+        assert [job.collection_slot for job in jobs] == [6, 7]
+        assert all(job.state == "succeeded" for job in jobs)
         assert risk_flags(
             db,
             publication_id=readings[0].publication_id,

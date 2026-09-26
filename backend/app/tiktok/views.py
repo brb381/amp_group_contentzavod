@@ -12,6 +12,7 @@ from app.contracts import TikTokViewCollectionCommand
 from app.integrations.models import ExternalProviderState
 from app.readings.models import ReadingSource, ReadingStatus, ViewReading, ViewReadingHistory
 from app.readings.policy import risk_flags
+from app.readings.view_slots import view_reading_idempotency_key
 from app.readings.revision import lock_reading_dataset_revision
 from app.tiktok.client import TikTokClient, TikTokClientError
 from app.tiktok.models import TikTokViewCollectionJob
@@ -135,7 +136,7 @@ def _apply_success(
                 job.state = "failed"
                 job.last_error_code = "reading_period_financially_closed"
             else:
-                key = f"tiktok-public:{job.collection_date.isoformat()}"
+                key = view_reading_idempotency_key("tiktok-public", job.collection_date, job.collection_slot)
                 reading = db.scalar(
                     select(ViewReading).where(
                         ViewReading.publication_id == publication.id,

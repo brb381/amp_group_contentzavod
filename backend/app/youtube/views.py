@@ -17,6 +17,7 @@ from app.readings.models import (
     YouTubeViewCollectionJob,
 )
 from app.readings.policy import risk_flags, selected_for_random_review
+from app.readings.view_slots import view_reading_idempotency_key
 from app.readings.revision import lock_reading_dataset_revision
 from app.youtube.client import YouTubeClient, YouTubeClientError
 from app.youtube.models import ExternalProviderState
@@ -145,7 +146,7 @@ def _apply_success(command, response, settings, session_factory) -> None:
                     job.lease_until = None
                     job.dispatch_id = None
                     continue
-                key = f"youtube:{job.collection_date.isoformat()}"
+                key = view_reading_idempotency_key("youtube", job.collection_date, job.collection_slot)
                 reading = db.scalar(select(ViewReading).where(
                     ViewReading.publication_id == publication.id,
                     ViewReading.idempotency_key == key,

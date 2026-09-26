@@ -1,7 +1,6 @@
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from celery import Celery
 from sqlalchemy import select
@@ -21,6 +20,7 @@ from app.database.factory import create_session_factory
 from app.platforms import Platform
 from app.readings.models import YouTubeViewCollectionJob
 from app.scheduler_config import get_scheduler_settings
+from app.readings.view_slots import current_view_collection_slot
 from app.youtube.models import ExternalProviderState, ExternalQuotaUsage, YouTubeEnrichmentJob
 from app.youtube.time import next_pacific_reset, pacific_quota_date
 
@@ -30,7 +30,6 @@ settings = get_scheduler_settings()
 SessionLocal = create_session_factory(settings.database_url)
 producer = Celery("amp_youtube_scheduler", broker=settings.redis_url)
 YOUTUBE_LEASE = timedelta(minutes=5)
-MOSCOW = ZoneInfo("Europe/Moscow")
 
 
 def _aware(value: datetime) -> datetime:
@@ -237,25 +236,20 @@ def dispatch_youtube_batch(
         return False
 
 
-def _create_daily_view_jobs(db, now: datetime) -> None:
-    local = now.astimezone(MOSCOW)
-    if local.day < 25 or local.hour < settings.youtube_collection_hour_moscow:
-        return
-    collection_date = local.date()
-    existing = set(
-        db.scalars(
-            select(YouTubeViewCollectionJob.publication_id).where(
-                YouTubeViewCollectionJob.collection_date == collection_date
-            )
-        )
-    )
+def _create_view_jobs(db, now: datetime) -> None:
+    slot = current_view_collection_slot(now)
+
     publications = db.execute(
         select(Publication.id, Publication.external_id).where(
             Publication.platform == Platform.YOUTUBE,
             Publication.status == PublicationStatus.APPROVED,
             Publication.deleted_at.is_(None),
             Publication.external_id.is_not(None),
-            Publication.id.notin_(existing) if existing else True,
+            ~select(YouTubeViewCollectionJob.id).where(
+                YouTubeViewCollectionJob.publication_id == Publication.id,
+                YouTubeViewCollectionJob.collection_date == slot.collection_date,
+                YouTubeViewCollectionJob.collection_slot == slot.index,
+            ).exists(),
         )
     ).all()
     for publication_id, external_id in publications:
@@ -263,7 +257,8 @@ def _create_daily_view_jobs(db, now: datetime) -> None:
             YouTubeViewCollectionJob(
                 publication_id=publication_id,
                 external_id=external_id,
-                collection_date=collection_date,
+                collection_date=slot.collection_date,
+                collection_slot=slot.index,
                 available_at=now,
             )
         )
@@ -281,7 +276,7 @@ def dispatch_youtube_view_batch(
     db = session_factory()
     command = None
     try:
-        _create_daily_view_jobs(db, now)
+        _create_view_jobs(db, now)
         stale_jobs = list(
             db.scalars(
                 select(YouTubeViewCollectionJob)
