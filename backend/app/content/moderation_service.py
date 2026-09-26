@@ -1,16 +1,19 @@
 import math
 import uuid
+from datetime import date
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.audit.service import AuditAction, AuditContext, record_event
 from app.auth.models import AccountStatus, Role, User
 from app.auth.security import utc_now
+from app.catalog.models import Brand, Product
 from app.content.models import (
     Publication,
     PublicationAvailability,
     PublicationHistory,
+    PublicationPromoIssuance,
     PublicationParseStatus,
     PublicationStatus,
     VideoCard,
@@ -21,6 +24,8 @@ from app.content.schemas import (
     PublicationModerationItem,
     PublicationModerationListResponse,
     PublicationResponse,
+    PublicationDeactivationRequest,
+    PromoIssuanceCreate,
     PublicationReviewRequest,
 )
 from app.content.service import publication_counts_by_card, resolve_card_product, video_card_response
@@ -80,6 +85,14 @@ def list_publications_for_moderation(
     publication_status: PublicationStatus | None,
     platform: Platform | None,
     parse_status: PublicationParseStatus | None,
+    blogger_id: uuid.UUID | None,
+    blogger: str | None,
+    brand: Brand | None,
+    product_id: uuid.UUID | None,
+    product: str | None,
+    date_from: date | None,
+    date_to: date | None,
+    reason: str | None,
     page: int,
     page_size: int,
 ) -> PublicationModerationListResponse:
@@ -90,14 +103,36 @@ def list_publications_for_moderation(
         filters.append(Publication.platform == platform)
     if parse_status:
         filters.append(Publication.parse_status == parse_status)
+    if blogger_id:
+        filters.append(VideoCard.blogger_id == blogger_id)
+    if blogger:
+        pattern = f"%{blogger.strip()}%"
+        filters.append(or_(User.email.ilike(pattern), CreatorProfile.full_name.ilike(pattern), CreatorProfile.display_name.ilike(pattern)))
+    if brand:
+        filters.append((Product.brand == brand) | (VideoCard.reported_brand == brand))
+    if product_id:
+        filters.append(VideoCard.product_id == product_id)
+    if product:
+        pattern = f"%{product.strip()}%"
+        filters.append(or_(Product.publication_name.ilike(pattern), Product.model_name.ilike(pattern), Product.sku.ilike(pattern), VideoCard.reported_product_name.ilike(pattern)))
+    if date_from:
+        filters.append(func.date(func.coalesce(Publication.submitted_at, Publication.created_at)) >= date_from)
+    if date_to:
+        filters.append(func.date(func.coalesce(Publication.submitted_at, Publication.created_at)) <= date_to)
+    if reason:
+        filters.append(Publication.moderation_reason.ilike(f"%{reason.strip()}%"))
 
-    total = db.scalar(select(func.count()).select_from(Publication).where(*filters)) or 0
-    rows = db.execute(
+    base = (
         select(Publication, VideoCard, User, CreatorProfile)
         .join(VideoCard, VideoCard.id == Publication.video_card_id)
         .join(User, User.id == VideoCard.blogger_id)
         .outerjoin(CreatorProfile, CreatorProfile.user_id == User.id)
+        .outerjoin(Product, Product.id == VideoCard.product_id)
         .where(*filters)
+    )
+    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    rows = db.execute(
+        base
         .order_by(
             func.coalesce(Publication.submitted_at, Publication.created_at),
             Publication.id,
@@ -138,6 +173,16 @@ def get_publication_moderation_detail(
             .order_by(PublicationHistory.created_at.desc(), PublicationHistory.id.desc())
         )
     )
+    promo_issuances = list(
+        db.scalars(
+            select(PublicationPromoIssuance)
+            .where(PublicationPromoIssuance.publication_id == publication.id)
+            .order_by(
+                PublicationPromoIssuance.issued_at.desc(),
+                PublicationPromoIssuance.id.desc(),
+            )
+        )
+    )
     counts = publication_counts_by_card(db, [card.id])
     return PublicationModerationDetail(
         publication=PublicationResponse.model_validate(publication),
@@ -148,6 +193,7 @@ def get_publication_moderation_detail(
         creator_full_name=profile.full_name if profile else None,
         creator_display_name=profile.display_name if profile else None,
         history=history,
+        promo_issuances=promo_issuances,
     )
 
 
@@ -349,5 +395,61 @@ def review_publication(
             action_path=f"/publications/{publication.id}",
         ),
     )
+    db.flush()
+    return get_publication_moderation_detail(db, publication.id)
+
+def _lock_publication_operator(db: Session, user_id: uuid.UUID, allowed_roles: set[Role]) -> User:
+    operator = db.scalar(select(User).where(User.id == user_id).with_for_update())
+    if not operator or operator.status != AccountStatus.ACTIVE or operator.role not in allowed_roles:
+        raise APIError(403, "PUBLICATION_OPERATION_PERMISSION_CHANGED", "Publication operation permissions changed; authenticate again")
+    return operator
+
+
+def deactivate_publication(
+    db: Session, *, publication_id: uuid.UUID, operator: User,
+    payload: PublicationDeactivationRequest, audit_context: AuditContext,
+) -> PublicationModerationDetail:
+    locked_operator = _lock_publication_operator(db, operator.id, {Role.MANAGER, Role.ADMIN})
+    publication, _, creator, _ = _lock_publication_graph(db, publication_id)
+    if publication.status != PublicationStatus.APPROVED:
+        raise APIError(409, "INVALID_PUBLICATION_DEACTIVATION", "Only an approved publication can be deactivated", {"current_status": publication.status.value})
+    now = utc_now()
+    publication.status = PublicationStatus.INACTIVE
+    publication.moderation_reason = payload.reason
+    publication.updated_at = now
+    record_publication_history(db, publication, locked_operator.id, "publication_deactivated", from_status=PublicationStatus.APPROVED.value, to_status=PublicationStatus.INACTIVE.value, reason=payload.reason)
+    record_event(db, context=audit_context, action=AuditAction.PUBLICATION_DEACTIVATED, actor_user_id=locked_operator.id, actor_role=locked_operator.role.value, object_type="publication", object_id=publication.id, metadata={"reason": payload.reason})
+    create_notification(db, NotificationCommand(
+        recipient_user_id=creator.id, template_code="publication_status_changed",
+        context={"publication_id": str(publication.id), "status": PublicationStatus.INACTIVE.value},
+        severity=NotificationSeverity.ACTION_REQUIRED,
+        deduplication_key=f"publication:{publication.id}:deactivated:{now.isoformat()}",
+        related_object_type="publication", related_object_id=publication.id,
+        action_path=f"/publications/{publication.id}",
+    ))
+    db.flush()
+    return get_publication_moderation_detail(db, publication.id)
+
+
+def record_promo_issuance(
+    db: Session, *, publication_id: uuid.UUID, operator: User,
+    payload: PromoIssuanceCreate, audit_context: AuditContext,
+) -> PublicationModerationDetail:
+    locked_operator = _lock_publication_operator(db, operator.id, {Role.MODERATOR, Role.MANAGER, Role.ADMIN})
+    publication, _, _, _ = _lock_publication_graph(db, publication_id)
+    if publication.status != PublicationStatus.APPROVED:
+        raise APIError(409, "PROMO_REQUIRES_APPROVED_PUBLICATION", "A promo code can be marked as issued only for an approved publication", {"current_status": publication.status.value})
+    existing = db.scalar(select(PublicationPromoIssuance).where(
+        PublicationPromoIssuance.publication_id == publication.id,
+        PublicationPromoIssuance.marketplace == payload.marketplace,
+    ))
+    if existing:
+        raise APIError(409, "PROMO_ISSUANCE_ALREADY_RECORDED", "Promo code issuance is already recorded for this marketplace", {"marketplace": payload.marketplace.value})
+    db.add(PublicationPromoIssuance(
+        publication_id=publication.id, marketplace=payload.marketplace,
+        issued_by_user_id=locked_operator.id, note=payload.note,
+    ))
+    record_publication_history(db, publication, locked_operator.id, "promo_code_issued", from_status=publication.status.value, to_status=publication.status.value, changes={"marketplace": payload.marketplace.value}, reason=payload.note)
+    record_event(db, context=audit_context, action=AuditAction.PUBLICATION_PROMO_ISSUED, actor_user_id=locked_operator.id, actor_role=locked_operator.role.value, object_type="publication", object_id=publication.id, metadata={"marketplace": payload.marketplace.value})
     db.flush()
     return get_publication_moderation_detail(db, publication.id)

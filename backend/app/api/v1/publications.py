@@ -11,6 +11,7 @@ from app.content.publication_service import (
     get_publication,
     list_publications,
     publication_detail,
+    publication_responses_with_views,
     submit_publication,
     update_publication,
 )
@@ -42,7 +43,7 @@ def get_my_publications(
         db, user=user, card_id=card_id, page=page, page_size=page_size
     )
     return PublicationListResponse(
-        items=publications,
+        items=publication_responses_with_views(db, publications),
         page=page,
         page_size=page_size,
         total_items=total,

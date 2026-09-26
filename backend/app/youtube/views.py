@@ -2,7 +2,11 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
+import app.billing.models  # noqa: F401 - registers calculation_periods FK target
+import app.creators.models  # noqa: F401 - registers social_accounts FK target
+
 from app.clock import utc_now
+from app.program.service import random_review_percent, suspicious_growth_threshold
 from app.content.models import Publication, PublicationAvailability
 from app.contracts import YouTubeViewCollectionCommand
 from app.readings.models import (
@@ -12,7 +16,7 @@ from app.readings.models import (
     ViewReadingHistory,
     YouTubeViewCollectionJob,
 )
-from app.readings.policy import risk_flags
+from app.readings.policy import risk_flags, selected_for_random_review
 from app.readings.revision import lock_reading_dataset_revision
 from app.youtube.client import YouTubeClient, YouTubeClientError
 from app.youtube.models import ExternalProviderState
@@ -117,6 +121,8 @@ def _apply_success(command, response, settings, session_factory) -> None:
         ).with_for_update()))
         revision = lock_reading_dataset_revision(db)
         readings_changed = False
+        growth_threshold = suspicious_growth_threshold(db, settings.suspicious_monthly_view_growth)
+        review_percent = random_review_percent(db)
         for job in jobs:
             item = commands.get(job.id)
             publication = db.get(Publication, job.publication_id)
@@ -150,11 +156,13 @@ def _apply_success(command, response, settings, session_factory) -> None:
                         publication_id=publication.id,
                         period=period,
                         value=value,
-                        suspicious_growth_threshold=(
-                            settings.suspicious_monthly_view_growth
-                        ),
+                        suspicious_growth_threshold=growth_threshold,
                     )
-                    pending = "views_decreased" in flags
+                    if selected_for_random_review(
+                        publication.id, period, review_percent
+                    ):
+                        flags = sorted(set([*flags, "random_review"]))
+                    pending = "views_decreased" in flags or "random_review" in flags
                     reading = ViewReading(
                         publication_id=publication.id,
                         reporting_period=period,

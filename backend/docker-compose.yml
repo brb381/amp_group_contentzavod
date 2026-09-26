@@ -10,6 +10,9 @@ services:
       DB_SCHEDULER_PASSWORD: ${DB_SCHEDULER_PASSWORD:?DB_SCHEDULER_PASSWORD is required}
       DB_EMAIL_WORKER_PASSWORD: ${DB_EMAIL_WORKER_PASSWORD:?DB_EMAIL_WORKER_PASSWORD is required}
       DB_YOUTUBE_WORKER_PASSWORD: ${DB_YOUTUBE_WORKER_PASSWORD:?DB_YOUTUBE_WORKER_PASSWORD is required}
+      DB_TIKTOK_WORKER_PASSWORD: ${DB_TIKTOK_WORKER_PASSWORD:?DB_TIKTOK_WORKER_PASSWORD is required}
+      DB_VK_WORKER_PASSWORD: ${DB_VK_WORKER_PASSWORD:?DB_VK_WORKER_PASSWORD is required}
+      DB_RUTUBE_WORKER_PASSWORD: ${DB_RUTUBE_WORKER_PASSWORD:?DB_RUTUBE_WORKER_PASSWORD is required}
       DB_CALCULATION_WORKER_PASSWORD: ${DB_CALCULATION_WORKER_PASSWORD:?DB_CALCULATION_WORKER_PASSWORD is required}
       DB_EXPORT_WORKER_PASSWORD: ${DB_EXPORT_WORKER_PASSWORD:?DB_EXPORT_WORKER_PASSWORD is required}
       DB_RETENTION_WORKER_PASSWORD: ${DB_RETENTION_WORKER_PASSWORD:?DB_RETENTION_WORKER_PASSWORD is required}
@@ -33,6 +36,34 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  runtime-roles:
+    image: postgres:17-alpine
+    command: sh /scripts/10-runtime-roles.sh
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: ${DB_MIGRATION_PASSWORD:?DB_MIGRATION_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${DB_MIGRATION_USER:?DB_MIGRATION_USER is required}
+      POSTGRES_PASSWORD: ${DB_MIGRATION_PASSWORD:?DB_MIGRATION_PASSWORD is required}
+      DB_API_PASSWORD: ${DB_API_PASSWORD:?DB_API_PASSWORD is required}
+      DB_SCHEDULER_PASSWORD: ${DB_SCHEDULER_PASSWORD:?DB_SCHEDULER_PASSWORD is required}
+      DB_EMAIL_WORKER_PASSWORD: ${DB_EMAIL_WORKER_PASSWORD:?DB_EMAIL_WORKER_PASSWORD is required}
+      DB_YOUTUBE_WORKER_PASSWORD: ${DB_YOUTUBE_WORKER_PASSWORD:?DB_YOUTUBE_WORKER_PASSWORD is required}
+      DB_TIKTOK_WORKER_PASSWORD: ${DB_TIKTOK_WORKER_PASSWORD:?DB_TIKTOK_WORKER_PASSWORD is required}
+      DB_VK_WORKER_PASSWORD: ${DB_VK_WORKER_PASSWORD:?DB_VK_WORKER_PASSWORD is required}
+      DB_RUTUBE_WORKER_PASSWORD: ${DB_RUTUBE_WORKER_PASSWORD:?DB_RUTUBE_WORKER_PASSWORD is required}
+      DB_CALCULATION_WORKER_PASSWORD: ${DB_CALCULATION_WORKER_PASSWORD:?DB_CALCULATION_WORKER_PASSWORD is required}
+      DB_EXPORT_WORKER_PASSWORD: ${DB_EXPORT_WORKER_PASSWORD:?DB_EXPORT_WORKER_PASSWORD is required}
+      DB_RETENTION_WORKER_PASSWORD: ${DB_RETENTION_WORKER_PASSWORD:?DB_RETENTION_WORKER_PASSWORD is required}
+      DB_LIFECYCLE_WORKER_PASSWORD: ${DB_LIFECYCLE_WORKER_PASSWORD:?DB_LIFECYCLE_WORKER_PASSWORD is required}
+      DB_BACKUP_PASSWORD: ${DB_BACKUP_PASSWORD:?DB_BACKUP_PASSWORD is required}
+      DB_MONITOR_PASSWORD: ${DB_MONITOR_PASSWORD:?DB_MONITOR_PASSWORD is required}
+    volumes:
+      - ./docker/postgres:/scripts:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   minio:
     image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
@@ -81,8 +112,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${DB_MIGRATION_USER}:${DB_MIGRATION_PASSWORD}@postgres:5432/${POSTGRES_DB}
     depends_on:
-      postgres:
-        condition: service_healthy
+      runtime-roles:
+        condition: service_completed_successfully
 
   api:
     build:
@@ -154,6 +185,63 @@ services:
       REDIS_URL: redis://redis:6379/0
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
       YOUTUBE_REQUEST_TIMEOUT_SECONDS: "15"
+      SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  tiktok-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.tiktok_worker:celery_app worker -Q tiktok --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_tiktok_worker:${DB_TIKTOK_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      TIKTOK_REQUEST_TIMEOUT_SECONDS: ${TIKTOK_REQUEST_TIMEOUT_SECONDS:-15}
+      SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  vk-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.vk_worker:celery_app worker -Q vk --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_vk_worker:${DB_VK_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      VK_REQUEST_TIMEOUT_SECONDS: ${VK_REQUEST_TIMEOUT_SECONDS:-15}
+      SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  rutube-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.rutube_worker:celery_app worker -Q rutube --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_rutube_worker:${DB_RUTUBE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      RUTUBE_REQUEST_TIMEOUT_SECONDS: ${RUTUBE_REQUEST_TIMEOUT_SECONDS:-15}
       SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
     depends_on:
       migrate:
@@ -235,6 +323,9 @@ services:
       YOUTUBE_DAILY_WORKING_LIMIT: "9000"
       SCHEDULER_POLL_INTERVAL_SECONDS: "2"
       YOUTUBE_COLLECTION_HOUR_MOSCOW: "23"
+      TIKTOK_COLLECTION_HOUR_MOSCOW: ${TIKTOK_COLLECTION_HOUR_MOSCOW:-23}
+      VK_COLLECTION_HOUR_MOSCOW: ${VK_COLLECTION_HOUR_MOSCOW:-23}
+      RUTUBE_COLLECTION_HOUR_MOSCOW: ${RUTUBE_COLLECTION_HOUR_MOSCOW:-23}
       CALCULATION_CLOSE_DELAY_MINUTES: "5"
     depends_on:
       migrate:

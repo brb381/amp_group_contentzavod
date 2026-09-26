@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.readings.models import ReadingSource, ReadingStatus
 from app.readings.limits import MAX_VIEW_COUNT
+from app.platforms import Platform
 
 
 class ReadingValueRequest(BaseModel):
@@ -50,6 +51,10 @@ class ViewReadingResponse(BaseModel):
 
     id: uuid.UUID
     publication_id: uuid.UUID
+    video_card_id: uuid.UUID | None = None
+    publication_title: str | None = None
+    platform: Platform | None = None
+    thumbnail_url: str | None = None
     reporting_period: date
     source: ReadingSource
     reported_value: int

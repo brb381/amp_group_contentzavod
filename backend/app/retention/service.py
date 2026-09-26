@@ -140,6 +140,8 @@ def anonymize_eligible_account_pii(
         profile.telegram = None
         profile.city_country = None
         profile.content_topics = None
+        profile.avatar_data = None
+        profile.avatar_content_type = None
         profile.moderation_reason = None
         profile.pii_anonymized_at = effective_at
 

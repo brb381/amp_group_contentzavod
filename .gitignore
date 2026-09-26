@@ -38,3 +38,6 @@ backend/ops/logs/
 
 # JavaScript dependencies
 node_modules/
+
+# Local UI review screenshots
+artifacts/

@@ -16,6 +16,7 @@ from app.content.service import (
     get_video_card,
     list_video_cards,
     publication_counts_by_card,
+    publication_thumbnails_by_card,
     update_video_card,
     video_card_response,
 )
@@ -36,9 +37,14 @@ def get_my_video_cards(
     cards, total, total_pages = list_video_cards(
         db, user=user, page=page, page_size=page_size
     )
-    counts = publication_counts_by_card(db, [card.id for card in cards])
+    card_ids = [card.id for card in cards]
+    counts = publication_counts_by_card(db, card_ids)
+    thumbnails = publication_thumbnails_by_card(db, card_ids)
     return VideoCardListResponse(
-        items=[video_card_response(card, counts.get(card.id)) for card in cards],
+        items=[
+            video_card_response(card, counts.get(card.id), thumbnails.get(card.id))
+            for card in cards
+        ],
         page=page,
         page_size=page_size,
         total_items=total,
@@ -71,7 +77,8 @@ def get_my_video_card(
 ) -> VideoCardResponse:
     card = get_video_card(db, user=user, card_id=card_id)
     counts = publication_counts_by_card(db, [card.id])
-    return video_card_response(card, counts.get(card.id))
+    thumbnails = publication_thumbnails_by_card(db, [card.id])
+    return video_card_response(card, counts.get(card.id), thumbnails.get(card.id))
 
 
 @router.patch("/{card_id}", response_model=VideoCardResponse)
@@ -91,4 +98,5 @@ def patch_my_video_card(
         audit_context=context_from_request(request),
     )
     counts = publication_counts_by_card(db, [card.id])
-    return video_card_response(card, counts.get(card.id))
+    thumbnails = publication_thumbnails_by_card(db, [card.id])
+    return video_card_response(card, counts.get(card.id), thumbnails.get(card.id))

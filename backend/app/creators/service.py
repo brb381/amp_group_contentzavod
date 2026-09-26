@@ -64,6 +64,9 @@ def profile_response(db: Session, profile: CreatorProfile) -> ProfileResponse:
         )
     )
     response = ProfileResponse.model_validate(profile)
+    if profile.avatar_content_type:
+        version = int(profile.updated_at.timestamp()) if profile.updated_at else 0
+        response.avatar_url = f"/api/v1/me/profile/avatar?v={version}"
     response.social_accounts = accounts
     response.history = history
     return response
@@ -91,6 +94,76 @@ def _history(
         )
     )
 
+
+def set_profile_avatar(
+    db: Session,
+    user: User,
+    *,
+    data: bytes,
+    content_type: str,
+    audit_context: AuditContext,
+) -> CreatorProfile:
+    require_blogger(user)
+    profile = get_user_profile(db, user.id, for_update=True)
+    if not profile:
+        raise APIError(409, "PROFILE_REQUIRED", "Create the profile before uploading an avatar")
+    had_avatar = profile.avatar_content_type is not None
+    profile.avatar_data = data
+    profile.avatar_content_type = content_type
+    profile.updated_at = utc_now()
+    _history(
+        db,
+        profile,
+        user.id,
+        "profile_avatar_updated",
+        changes={"avatar": {"old": had_avatar, "new": True}},
+    )
+    record_event(
+        db,
+        context=audit_context,
+        action=AuditAction.PROFILE_UPDATED,
+        actor_user_id=user.id,
+        actor_role=user.role.value,
+        object_type="creator_profile",
+        object_id=profile.id,
+        metadata={"fields": ["avatar"]},
+    )
+    return profile
+
+
+def remove_profile_avatar(
+    db: Session,
+    user: User,
+    *,
+    audit_context: AuditContext,
+) -> CreatorProfile:
+    require_blogger(user)
+    profile = get_user_profile(db, user.id, for_update=True)
+    if not profile:
+        raise APIError(404, "PROFILE_NOT_FOUND", "Profile was not found")
+    if profile.avatar_content_type is None:
+        return profile
+    profile.avatar_data = None
+    profile.avatar_content_type = None
+    profile.updated_at = utc_now()
+    _history(
+        db,
+        profile,
+        user.id,
+        "profile_avatar_removed",
+        changes={"avatar": {"old": True, "new": False}},
+    )
+    record_event(
+        db,
+        context=audit_context,
+        action=AuditAction.PROFILE_UPDATED,
+        actor_user_id=user.id,
+        actor_role=user.role.value,
+        object_type="creator_profile",
+        object_id=profile.id,
+        metadata={"fields": ["avatar"]},
+    )
+    return profile
 
 def _record_social_change(
     db: Session,

@@ -25,6 +25,6 @@ COPY ops ./ops
 RUN pip install --no-cache-dir ".[dev]"
 USER appuser
 
-CMD ["pytest", "-q"]
+CMD ["python", "-m", "pytest", "-q"]
 
 FROM base AS runtime

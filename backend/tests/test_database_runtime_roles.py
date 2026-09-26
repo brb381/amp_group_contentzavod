@@ -10,6 +10,9 @@ RUNTIME_ROLES = {
     "amp_scheduler",
     "amp_email_worker",
     "amp_youtube_worker",
+    "amp_tiktok_worker",
+    "amp_vk_worker",
+    "amp_rutube_worker",
     "amp_calculation_worker",
     "amp_export_worker",
     "amp_retention_worker",
@@ -156,6 +159,51 @@ def test_default_table_privileges_only_include_the_api(postgres_connection):
     [
         ("amp_email_worker", "outbox_events", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
         ("amp_youtube_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
+        ("amp_tiktok_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
+        ("amp_vk_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
+        ("amp_rutube_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
+        (
+            "amp_tiktok_worker",
+            "tiktok_view_collection_jobs",
+            {"SELECT", "UPDATE"},
+            {"INSERT", "DELETE"},
+        ),
+        (
+            "amp_vk_worker",
+            "vk_view_collection_jobs",
+            {"SELECT", "UPDATE"},
+            {"INSERT", "DELETE"},
+        ),
+        (
+            "amp_rutube_worker",
+            "rutube_view_collection_jobs",
+            {"SELECT", "UPDATE"},
+            {"INSERT", "DELETE"},
+        ),
+        (
+            "amp_rutube_worker",
+            "program_settings",
+            {"SELECT"},
+            {"INSERT", "UPDATE", "DELETE"},
+        ),
+        (
+            "amp_scheduler",
+            "rutube_view_collection_jobs",
+            {"SELECT", "INSERT", "UPDATE"},
+            {"DELETE"},
+        ),
+        (
+            "amp_scheduler",
+            "vk_view_collection_jobs",
+            {"SELECT", "INSERT", "UPDATE"},
+            {"DELETE"},
+        ),
+        (
+            "amp_scheduler",
+            "tiktok_view_collection_jobs",
+            {"SELECT", "INSERT", "UPDATE"},
+            {"DELETE"},
+        ),
         (
             "amp_calculation_worker",
             "publication_accruals",
@@ -165,6 +213,12 @@ def test_default_table_privileges_only_include_the_api(postgres_connection):
         (
             "amp_scheduler",
             "youtube_view_collection_jobs",
+            {"SELECT", "INSERT", "UPDATE"},
+            {"DELETE"},
+        ),
+        (
+            "amp_scheduler",
+            "billing_control",
             {"SELECT", "INSERT", "UPDATE"},
             {"DELETE"},
         ),
@@ -253,6 +307,9 @@ def test_lifecycle_worker_can_only_expire_the_balance_claim(postgres_connection)
     [
         "amp_email_worker",
         "amp_youtube_worker",
+        "amp_tiktok_worker",
+        "amp_vk_worker",
+        "amp_rutube_worker",
         "amp_calculation_worker",
         "amp_scheduler",
         "amp_lifecycle_worker",
@@ -281,6 +338,15 @@ def test_workers_cannot_read_unrelated_identity_data(postgres_connection):
     )
     assert not _has_table_privilege(
         postgres_connection, "amp_youtube_worker", "users", "SELECT"
+    )
+    assert not _has_table_privilege(
+        postgres_connection, "amp_tiktok_worker", "users", "SELECT"
+    )
+    assert not _has_table_privilege(
+        postgres_connection, "amp_vk_worker", "users", "SELECT"
+    )
+    assert not _has_table_privilege(
+        postgres_connection, "amp_rutube_worker", "users", "SELECT"
     )
     assert not _has_table_privilege(
         postgres_connection, "amp_calculation_worker", "users", "SELECT"

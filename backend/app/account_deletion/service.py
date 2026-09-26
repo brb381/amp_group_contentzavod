@@ -53,6 +53,9 @@ from app.outbox.models import OutboxEvent
 from app.payouts.models import PayoutRequest, PayoutStatus, RecipientType
 from app.readings.models import YouTubeViewCollectionJob
 from app.readings.revision import lock_reading_dataset_revision
+from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
+from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
+from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -284,6 +287,8 @@ def _soft_delete_creator_data(db: Session, blogger: User, now: datetime) -> None
         previous_status = profile.status
         profile.status = ProfileStatus.DELETED
         profile.moderation_reason = "account_deleted_by_creator"
+        profile.avatar_data = None
+        profile.avatar_content_type = None
         db.add(
             ProfileHistory(
                 profile_id=profile.id,
@@ -329,7 +334,16 @@ def _soft_delete_creator_data(db: Session, blogger: User, now: datetime) -> None
             )
         )
     if publication_ids:
-        for job_model in (YouTubeEnrichmentJob, YouTubeViewCollectionJob):
+        for job_model in (
+            YouTubeEnrichmentJob,
+            YouTubeViewCollectionJob,
+            TikTokEnrichmentJob,
+            TikTokViewCollectionJob,
+            VKEnrichmentJob,
+            VKViewCollectionJob,
+            RutubeEnrichmentJob,
+            RutubeViewCollectionJob,
+        ):
             db.execute(
                 update(job_model)
                 .where(

@@ -260,3 +260,49 @@ def test_social_account_moderation_history_and_soft_delete(client):
         "social_account_deleted",
         "social_account_approve",
     ]
+
+def test_profile_avatar_upload_download_and_removal(client):
+    email = "creator-avatar@example.com"
+    register_and_login(client, email)
+    verify_user(client, email)
+    client.put("/api/v1/me/profile", json=PROFILE, headers=csrf_headers(client))
+
+    avatar = b"\x89PNG\r\n\x1a\n" + b"avatar-content"
+    headers = {**csrf_headers(client), "Content-Type": "image/png"}
+    uploaded = client.put("/api/v1/me/profile/avatar", content=avatar, headers=headers)
+    assert uploaded.status_code == 200
+    assert uploaded.json()["avatar_url"].startswith("/api/v1/me/profile/avatar?v=")
+
+    downloaded = client.get("/api/v1/me/profile/avatar")
+    assert downloaded.status_code == 200
+    assert downloaded.headers["content-type"] == "image/png"
+    assert downloaded.headers["cache-control"] == "private, no-store"
+    assert downloaded.content == avatar
+
+    removed = client.delete("/api/v1/me/profile/avatar", headers=csrf_headers(client))
+    assert removed.status_code == 204
+    assert client.get("/api/v1/me/profile/avatar").status_code == 404
+    assert client.get("/api/v1/me/profile").json()["profile"]["avatar_url"] is None
+
+
+def test_profile_avatar_rejects_invalid_format_and_oversized_body(client):
+    email = "creator-avatar-validation@example.com"
+    register_and_login(client, email)
+    verify_user(client, email)
+    client.put("/api/v1/me/profile", json=PROFILE, headers=csrf_headers(client))
+
+    invalid = client.put(
+        "/api/v1/me/profile/avatar",
+        content=b"not-an-image",
+        headers={**csrf_headers(client), "Content-Type": "image/png"},
+    )
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "AVATAR_FORMAT_INVALID"
+
+    oversized = client.put(
+        "/api/v1/me/profile/avatar",
+        content=b"\x89PNG\r\n\x1a\n" + b"x" * (1024 * 1024),
+        headers={**csrf_headers(client), "Content-Type": "image/png"},
+    )
+    assert oversized.status_code == 413
+    assert oversized.json()["error"]["code"] == "AVATAR_TOO_LARGE"

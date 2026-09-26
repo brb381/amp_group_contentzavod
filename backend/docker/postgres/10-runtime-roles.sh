@@ -6,6 +6,9 @@ DB_API_PASSWORD
 DB_SCHEDULER_PASSWORD
 DB_EMAIL_WORKER_PASSWORD
 DB_YOUTUBE_WORKER_PASSWORD
+DB_TIKTOK_WORKER_PASSWORD
+DB_VK_WORKER_PASSWORD
+DB_RUTUBE_WORKER_PASSWORD
 DB_CALCULATION_WORKER_PASSWORD
 DB_EXPORT_WORKER_PASSWORD
 DB_RETENTION_WORKER_PASSWORD
@@ -31,6 +34,9 @@ psql \
     --set=scheduler_password="$DB_SCHEDULER_PASSWORD" \
     --set=email_worker_password="$DB_EMAIL_WORKER_PASSWORD" \
     --set=youtube_worker_password="$DB_YOUTUBE_WORKER_PASSWORD" \
+    --set=tiktok_worker_password="$DB_TIKTOK_WORKER_PASSWORD" \
+    --set=vk_worker_password="$DB_VK_WORKER_PASSWORD" \
+    --set=rutube_worker_password="$DB_RUTUBE_WORKER_PASSWORD" \
     --set=calculation_worker_password="$DB_CALCULATION_WORKER_PASSWORD" \
     --set=export_worker_password="$DB_EXPORT_WORKER_PASSWORD" \
     --set=retention_worker_password="$DB_RETENTION_WORKER_PASSWORD" \
@@ -87,6 +93,42 @@ WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_youtube_worker')
 SELECT format(
     'ALTER ROLE amp_youtube_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
     :'youtube_worker_password'
+)
+\gexec
+
+SELECT format(
+    'CREATE ROLE amp_tiktok_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'tiktok_worker_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_tiktok_worker')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_tiktok_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'tiktok_worker_password'
+)
+\gexec
+
+SELECT format(
+    'CREATE ROLE amp_vk_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'vk_worker_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_vk_worker')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_vk_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'vk_worker_password'
+)
+\gexec
+
+SELECT format(
+    'CREATE ROLE amp_rutube_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'rutube_worker_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_rutube_worker')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_rutube_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'rutube_worker_password'
 )
 \gexec
 
@@ -169,6 +211,9 @@ SELECT format('REVOKE %I FROM %I', granted.rolname, member.rolname)
     'amp_scheduler',
     'amp_email_worker',
     'amp_youtube_worker',
+    'amp_tiktok_worker',
+    'amp_vk_worker',
+    'amp_rutube_worker',
     'amp_calculation_worker',
     'amp_export_worker',
     'amp_retention_worker',

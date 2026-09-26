@@ -42,6 +42,12 @@ class PublicationEnrichmentStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class PromoMarketplace(str, enum.Enum):
+    OZON = "ozon"
+    WILDBERRIES = "wildberries"
+    YANDEX_MARKET = "yandex_market"
+
+
 class VideoCard(Base):
     __tablename__ = "video_cards"
     __table_args__ = (
@@ -185,4 +191,39 @@ class PublicationHistory(Base):
     )
     pii_anonymized_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+class PublicationPromoIssuance(Base):
+    __tablename__ = "publication_promo_issuances"
+    __table_args__ = (
+        UniqueConstraint(
+            "publication_id",
+            "marketplace",
+            name="uq_publication_promo_issuance_marketplace",
+        ),
+        Index("ix_publication_promo_issuances_publication", "publication_id", "issued_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    publication_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("publications.id", ondelete="RESTRICT"), nullable=False
+    )
+    marketplace: Mapped[PromoMarketplace] = mapped_column(
+        Enum(
+            PromoMarketplace,
+            values_callable=enum_values,
+            name="promomarketplace",
+            native_enum=False,
+            length=32,
+        ),
+        nullable=False,
+    )
+    issued_by_user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    issued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
     )

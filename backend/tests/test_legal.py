@@ -172,11 +172,12 @@ def test_material_change_blocks_only_participation_until_accepted(client):
     )
     assert accepted.status_code == 201, accepted.text
     assert client.get("/api/v1/me/legal-status").json()["is_participation_allowed"] is True
-    assert client.put(
+    updated = client.put(
         "/api/v1/me/profile",
         headers=csrf,
         json={"full_name": "Legal User", "display_name": "legal-user"},
-    ).status_code == 200
+    )
+    assert updated.status_code == 200, updated.text
 
 
 def test_minor_document_change_does_not_require_reacceptance(client):

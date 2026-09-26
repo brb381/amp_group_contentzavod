@@ -10,6 +10,9 @@ from app.logging_config import configure_logging
 from app.scheduling.email import dispatch_email_events
 from app.scheduling.calculations import dispatch_calculation
 from app.scheduling.youtube import dispatch_youtube_batch, dispatch_youtube_view_batch
+from app.scheduling.tiktok import dispatch_tiktok_enrichment, dispatch_tiktok_view
+from app.scheduling.vk import dispatch_vk_enrichment, dispatch_vk_view
+from app.scheduling.rutube import dispatch_rutube_enrichment, dispatch_rutube_view
 from app.scheduling.exports import dispatch_export
 from app.scheduling.lifecycle import dispatch_lifecycle
 
@@ -33,6 +36,12 @@ def run_iteration(
             ("lifecycle", dispatch_lifecycle),
             ("youtube-views", dispatch_youtube_view_batch),
             ("youtube", dispatch_youtube_batch),
+            ("tiktok-views", dispatch_tiktok_view),
+            ("tiktok", dispatch_tiktok_enrichment),
+            ("vk-views", dispatch_vk_view),
+            ("vk", dispatch_vk_enrichment),
+            ("rutube-views", dispatch_rutube_view),
+            ("rutube", dispatch_rutube_enrichment),
         )
     )
     outcomes: dict[str, bool] = {}

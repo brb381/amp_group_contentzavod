@@ -23,15 +23,38 @@ from app.content.url_parser import PublicationURLInvalid, parse_publication_url
 from app.creators.models import CreatorProfile, ProfileStatus, SocialAccount, SocialAccountStatus
 from app.platforms import Platform
 from app.contracts import YouTubeEnrichmentCommand, YouTubeViewCollectionCommand
+from app.contracts import TikTokEnrichmentCommand, TikTokViewCollectionCommand
+from app.scheduling.tiktok import dispatch_tiktok_enrichment, dispatch_tiktok_view
 from app.scheduling.youtube import dispatch_youtube_batch, dispatch_youtube_view_batch
-from app.readings.models import ReadingStatus, ViewReading, YouTubeViewCollectionJob
-from app.readings.policy import risk_flags
+from app.readings.models import ReadingSource, ReadingStatus, ViewReading, YouTubeViewCollectionJob
+from app.readings.policy import risk_flags, selected_for_random_review
 from app.youtube.client import YouTubeClientError
 from app.youtube.models import ExternalProviderState, ExternalQuotaUsage, YouTubeEnrichmentJob
 from app.youtube.schemas import YouTubeViewCountsResponse, YouTubeVideosResponse
 from app.youtube.service import execute_youtube_enrichment
 from app.youtube.views import execute_youtube_view_collection
 from app.youtube.time import pacific_quota_date
+from app.tiktok.client import TikTokClientError
+from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
+from app.tiktok.schemas import TikTokOEmbedResponse, TikTokPublicVideo
+from app.tiktok.service import execute_tiktok_enrichment
+from app.tiktok.views import execute_tiktok_view_collection
+from app.tiktok_config import TikTokWorkerSettings
+from app.contracts import VKEnrichmentCommand, VKViewCollectionCommand
+from app.scheduling.vk import dispatch_vk_enrichment, dispatch_vk_view
+from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
+from app.vk.schemas import VKOEmbedResponse, VKPublicVideo
+from app.vk.service import execute_vk_enrichment
+from app.vk.views import execute_vk_view_collection
+from app.vk_config import VKWorkerSettings
+from app.contracts import RutubeEnrichmentCommand, RutubeViewCollectionCommand
+from app.scheduling.rutube import dispatch_rutube_enrichment, dispatch_rutube_view
+from app.rutube.client import RutubeClientError
+from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
+from app.rutube.schemas import RutubeVideo
+from app.rutube.service import execute_rutube_enrichment
+from app.rutube.views import execute_rutube_view_collection
+from app.rutube_config import RutubeWorkerSettings
 from app.legal.models import AcceptanceMethod, LegalAcceptance, LegalDocument
 
 
@@ -165,6 +188,13 @@ def create_publication(client, card_id: str, account_id: uuid.UUID, url: str) ->
     assert response.status_code == 201, response.text
     return response.json()
 
+
+def test_random_review_selection_is_bounded_and_deterministic():
+    publication_id = uuid.UUID("00000000-0000-0000-0000-000000000123")
+    period = date(2026, 9, 1)
+    assert selected_for_random_review(publication_id, period, 0) is False
+    assert selected_for_random_review(publication_id, period, 100) is True
+    assert selected_for_random_review(publication_id, period, 15) == selected_for_random_review(publication_id, period, 15)
 
 def test_url_parser_canonicalizes_identity_and_rejects_wrong_domain():
     watch = parse_publication_url(
@@ -315,6 +345,40 @@ def test_submit_locks_publication_and_card_product_and_updates_aggregate(client)
     }
 
 
+def test_publication_list_includes_pending_public_view_count(client):
+    blogger = create_blogger(client, "publication-views@example.com")
+    account = create_social_account(client, blogger.id, platform=Platform.VK)
+    login(client, blogger.email)
+    card = create_card(client)
+    publication = create_publication(
+        client, card["id"], account.id, "https://vk.com/video-1_123"
+    )
+    with client.app.state.test_session() as db:
+        stored_publication = db.get(Publication, uuid.UUID(publication["id"]))
+        stored_publication.external_thumbnail_url = "https://cdn.example.test/card-preview.jpg"
+        db.add(
+            ViewReading(
+                publication_id=uuid.UUID(publication["id"]),
+                reporting_period=date(2026, 9, 1),
+                source=ReadingSource.VK_PUBLIC,
+                reported_value=12915,
+                accepted_value=None,
+                status=ReadingStatus.PENDING,
+                risk_flags=["approximate_public_counter"],
+                idempotency_key="vk-public-card-count",
+                captured_at=datetime.now(timezone.utc),
+            )
+        )
+        db.commit()
+
+    response = client.get(f"/api/v1/me/video-cards/{card['id']}/publications")
+
+    assert response.status_code == 200
+    assert response.json()["items"][0]["current_views"] == 12915
+    cards = client.get("/api/v1/me/video-cards")
+    assert cards.status_code == 200
+    assert cards.json()["items"][0]["thumbnail_url"] == "https://cdn.example.test/card-preview.jpg"
+
 def test_draft_update_delete_and_owner_scope(client):
     owner = create_blogger(client, "draft-publication-owner@example.com")
     account = create_social_account(client, owner.id)
@@ -383,12 +447,23 @@ def test_moderation_queue_is_protected_filtered_and_contains_context(client):
     queue = client.get(
         "/api/v1/moderation/publications?platform=youtube&parseStatus=parsed&pageSize=10"
     )
+    filtered = client.get(
+        "/api/v1/moderation/publications"
+        f"?blogger={blogger.email}&brand=AMP&product=Model%20X"
+        f"&dateFrom={date.today().isoformat()}&platform=youtube"
+    )
+    mismatched = client.get(
+        "/api/v1/moderation/publications?blogger=unknown@example.com&platform=youtube"
+    )
     detail = client.get(f"/api/v1/moderation/publications/{publication['id']}")
 
     assert queue.status_code == 200
     assert queue.json()["total_items"] == 1
     assert queue.json()["items"][0]["card_title"] == "Queue card"
     assert queue.json()["items"][0]["creator_email"] == blogger.email
+    assert filtered.status_code == 200
+    assert filtered.json()["total_items"] == 1
+    assert mismatched.json()["total_items"] == 0
     assert detail.status_code == 200
     assert detail.json()["social_account"]["id"] == str(account.id)
     assert detail.json()["card"]["publication_summary"]["pending_review"] == 1
@@ -695,6 +770,87 @@ class CapturingProducer:
         self.messages.append({"name": name, "args": args, "queue": queue})
 
 
+def test_manager_can_record_promo_and_deactivate_approved_publication(client):
+    blogger = create_blogger(client, "publication-operations-blogger@example.com")
+    account = create_social_account(client, blogger.id)
+    product = create_product(client, sku="AMP-OPS-1")
+    login(client, blogger.email)
+    card = create_card(client, title="Publication operations")
+    publication = create_publication(
+        client, card["id"], account.id, "https://youtu.be/operations123"
+    )
+    submitted = client.post(
+        f"/api/v1/me/publications/{publication['id']}/submissions",
+        headers=csrf_headers(client),
+    )
+    assert submitted.status_code == 201
+
+    moderator = create_moderator(client, "publication-operations-moderator@example.com")
+    login(client, moderator.email)
+    approved = client.post(
+        f"/api/v1/moderation/publications/{publication['id']}/reviews",
+        json={"decision": "approve", "resolved_product_id": str(product.id)},
+        headers=csrf_headers(client),
+    )
+    assert approved.status_code == 200, approved.text
+
+    forbidden = client.post(
+        f"/api/v1/moderation/publications/{publication['id']}/deactivations",
+        json={"reason": "Campaign completed"},
+        headers=csrf_headers(client),
+    )
+    assert forbidden.status_code == 403
+
+    manager = create_manager(client, "publication-operations-manager@example.com")
+    login(client, manager.email)
+    detail = client.get(f"/api/v1/moderation/publications/{publication['id']}")
+    assert detail.status_code == 200
+
+    promo = client.post(
+        f"/api/v1/moderation/publications/{publication['id']}/promo-issuances",
+        json={"marketplace": "ozon", "note": "Sent via Telegram"},
+        headers=csrf_headers(client),
+    )
+    assert promo.status_code == 200, promo.text
+    assert promo.json()["promo_issuances"][0]["marketplace"] == "ozon"
+    assert promo.json()["promo_issuances"][0]["issued_by_user_id"] == str(manager.id)
+
+    duplicate = client.post(
+        f"/api/v1/moderation/publications/{publication['id']}/promo-issuances",
+        json={"marketplace": "ozon"},
+        headers=csrf_headers(client),
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "PROMO_ISSUANCE_ALREADY_RECORDED"
+
+    deactivated = client.post(
+        f"/api/v1/moderation/publications/{publication['id']}/deactivations",
+        json={"reason": "Campaign completed"},
+        headers=csrf_headers(client),
+    )
+    assert deactivated.status_code == 200, deactivated.text
+    body = deactivated.json()
+    assert body["publication"]["status"] == "inactive"
+    assert body["history"][0]["event_type"] == "publication_deactivated"
+
+    repeated = client.post(
+        f"/api/v1/moderation/publications/{publication['id']}/deactivations",
+        json={"reason": "Repeated request"},
+        headers=csrf_headers(client),
+    )
+    assert repeated.status_code == 409
+
+    with client.app.state.test_session() as db:
+        actions = set(
+            db.scalars(
+                select(SecurityEvent.action).where(
+                    SecurityEvent.object_id == uuid.UUID(publication["id"])
+                )
+            )
+        )
+        assert AuditAction.PUBLICATION_PROMO_ISSUED in actions
+        assert AuditAction.PUBLICATION_DEACTIVATED in actions
+
 def _submitted_youtube_publication(client, suffix: str) -> dict:
     blogger = create_blogger(client, f"youtube-worker-{suffix}@example.com")
     account = create_social_account(client, blogger.id)
@@ -713,6 +869,229 @@ def _submitted_youtube_publication(client, suffix: str) -> dict:
     assert submitted.status_code == 201
     assert submitted.json()["enrichment_status"] == "pending"
     return submitted.json()
+
+
+def _submitted_tiktok_publication(client, suffix: str) -> dict:
+    blogger = create_blogger(client, f"tiktok-worker-{suffix}@example.com")
+    account = create_social_account(client, blogger.id, platform=Platform.TIKTOK)
+    login(client, blogger.email)
+    card = create_card(client, title=f"TikTok {suffix}")
+    publication = create_publication(
+        client,
+        card["id"],
+        account.id,
+        f"https://www.tiktok.com/@creator/video/7500000000000000{suffix[-2:]}",
+    )
+    submitted = client.post(
+        f"/api/v1/me/publications/{publication['id']}/submissions",
+        headers=csrf_headers(client),
+    )
+    assert submitted.status_code == 201
+    assert submitted.json()["enrichment_status"] == "pending"
+    return submitted.json()
+
+
+def test_tiktok_scheduler_and_worker_apply_public_metadata(client):
+    publication = _submitted_tiktok_publication(client, "01")
+    producer = CapturingProducer()
+    session_factory = client.app.state.test_session
+
+    assert dispatch_tiktok_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is True
+    command = TikTokEnrichmentCommand.model_validate(producer.messages[0]["args"][0])
+
+    class SuccessfulClient:
+        def fetch_publication(self, source_url):
+            return TikTokOEmbedResponse.model_validate(
+                {
+                    "title": "Public TikTok title",
+                    "author_name": "Creator",
+                    "author_url": "https://www.tiktok.com/@creator",
+                    "thumbnail_url": "https://img.example/tiktok.jpg",
+                    "provider_name": "TikTok",
+                }
+            )
+
+    settings = TikTokWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_tiktok_enrichment(command, settings, session_factory, client=SuccessfulClient())
+
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication["id"]))
+        job = db.scalar(select(TikTokEnrichmentJob))
+        assert stored.enrichment_status == PublicationEnrichmentStatus.SUCCEEDED
+        assert stored.external_title == "Public TikTok title"
+        assert stored.external_author_id == "creator"
+        assert stored.availability.value == "available"
+        assert job.state == "succeeded"
+
+
+def test_tiktok_429_blocks_new_dispatch_until_retry_after(client):
+    _submitted_tiktok_publication(client, "02")
+    producer = CapturingProducer()
+    session_factory = client.app.state.test_session
+    assert dispatch_tiktok_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is True
+    command = TikTokEnrichmentCommand.model_validate(producer.messages[0]["args"][0])
+
+    class LimitedClient:
+        def fetch_publication(self, source_url):
+            raise TikTokClientError(429, "tiktok_http_error", "120")
+
+    settings = TikTokWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_tiktok_enrichment(command, settings, session_factory, client=LimitedClient())
+
+    with session_factory() as db:
+        job = db.scalar(select(TikTokEnrichmentJob))
+        provider = db.get(ExternalProviderState, "tiktok")
+        assert job.state == "retry_wait"
+        assert provider.status == "blocked"
+        assert provider.block_reason == "tiktok_http_error"
+    assert dispatch_tiktok_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is False
+    assert len(producer.messages) == 1
+
+
+def test_tiktok_public_counter_is_saved_as_pending_approximate_reading(client):
+    publication = _submitted_tiktok_publication(client, "03")
+    session_factory = client.app.state.test_session
+    enrichment_producer = CapturingProducer()
+    assert dispatch_tiktok_enrichment(
+        session_factory=session_factory, task_producer=enrichment_producer
+    ) is True
+    enrichment_command = TikTokEnrichmentCommand.model_validate(
+        enrichment_producer.messages[0]["args"][0]
+    )
+
+    class MetadataClient:
+        def fetch_publication(self, source_url):
+            return TikTokOEmbedResponse.model_validate(
+                {
+                    "title": "Video",
+                    "author_name": "Creator",
+                    "author_url": "https://www.tiktok.com/@creator",
+                    "thumbnail_url": "https://img.example/tiktok.jpg",
+                    "provider_name": "TikTok",
+                }
+            )
+
+    settings = TikTokWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_tiktok_enrichment(
+        enrichment_command, settings, session_factory, client=MetadataClient()
+    )
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication["id"]))
+        stored.status = PublicationStatus.APPROVED
+        db.commit()
+
+    producer = CapturingProducer()
+    now = datetime(2026, 9, 25, 20, 0, tzinfo=timezone.utc)
+    assert dispatch_tiktok_view(
+        now=now, session_factory=session_factory, task_producer=producer
+    ) is True
+    command = TikTokViewCollectionCommand.model_validate(producer.messages[0]["args"][0])
+
+    class StatsClient:
+        def fetch_public_stats(self, source_url):
+            return TikTokPublicVideo.model_validate(
+                {"id": "750000000000000003", "stats": {"playCount": 321456}}
+            )
+
+    execute_tiktok_view_collection(command, settings, session_factory, client=StatsClient())
+    with session_factory() as db:
+        reading = db.scalar(select(ViewReading))
+        job = db.scalar(select(TikTokViewCollectionJob))
+        assert reading.source.value == "tiktok_public"
+        assert reading.reported_value == 321456
+        assert reading.status == ReadingStatus.PENDING
+        assert reading.accepted_value is None
+        assert "approximate_public_counter" in reading.risk_flags
+        assert job.state == "succeeded"
+
+
+def test_vk_scheduler_and_worker_store_public_metadata_and_views(client):
+    blogger = create_blogger(client, "vk-worker@example.com")
+    account = create_social_account(client, blogger.id, platform=Platform.VK)
+    login(client, blogger.email)
+    card = create_card(client, title="VK video")
+    publication = create_publication(
+        client,
+        card["id"],
+        account.id,
+        "https://vkvideo.ru/video-42_123",
+    )
+    submitted = client.post(
+        f"/api/v1/me/publications/{publication['id']}/submissions",
+        headers=csrf_headers(client),
+    )
+    assert submitted.status_code == 201
+
+    producer = CapturingProducer()
+    session_factory = client.app.state.test_session
+    assert dispatch_vk_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is True
+    command = VKEnrichmentCommand.model_validate(producer.messages[0]["args"][0])
+
+    class MetadataClient:
+        def fetch_publication(self, source_url):
+            return VKOEmbedResponse.model_validate(
+                {
+                    "title": "Public VK title",
+                    "author_name": "VK channel",
+                    "thumbnail_url": "https://img.example/vk.jpg",
+                    "provider_name": "VK Video",
+                    "html": '<iframe src="https://vk.com/video_ext.php?oid=-42&id=123"></iframe>',
+                }
+            )
+
+    settings = VKWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_vk_enrichment(command, settings, session_factory, client=MetadataClient())
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication["id"]))
+        stored.status = PublicationStatus.APPROVED
+        assert stored.external_title == "Public VK title"
+        assert db.scalar(select(VKEnrichmentJob)).state == "succeeded"
+        db.commit()
+
+    view_producer = CapturingProducer()
+    now = datetime(2026, 9, 25, 20, 0, tzinfo=timezone.utc)
+    assert dispatch_vk_view(
+        now=now, session_factory=session_factory, task_producer=view_producer
+    ) is True
+    view_command = VKViewCollectionCommand.model_validate(
+        view_producer.messages[0]["args"][0]
+    )
+
+    class StatsClient:
+        def fetch_public_stats(self, source_url):
+            return VKPublicVideo(id=123, owner_id=-42, views=765432)
+
+    execute_vk_view_collection(
+        view_command, settings, session_factory, client=StatsClient()
+    )
+    with session_factory() as db:
+        reading = db.scalar(select(ViewReading))
+        assert reading.source.value == "vk_public"
+        assert reading.reported_value == 765432
+        assert reading.status == ReadingStatus.PENDING
+        assert reading.accepted_value is None
+        assert "approximate_public_counter" in reading.risk_flags
+        assert db.scalar(select(VKViewCollectionJob)).state == "succeeded"
 
 
 def test_scheduler_admits_one_youtube_batch_and_worker_applies_metadata(client):
@@ -870,18 +1249,19 @@ def test_scheduler_blocks_youtube_at_working_daily_limit(client):
 
 def test_manual_view_reading_can_be_edited_and_corrected(client, monkeypatch):
     blogger = create_blogger(client, "manual-reading@example.com")
-    account = create_social_account(client, blogger.id, platform=Platform.VK)
+    account = create_social_account(client, blogger.id, platform=Platform.RUTUBE)
     login(client, blogger.email)
     card = create_card(client, title="Manual views")
     publication = create_publication(
         client,
         card["id"],
         account.id,
-        "https://vk.com/clip-123_456",
+        "https://rutube.ru/video/manual-reading",
     )
     with client.app.state.test_session() as db:
         stored = db.get(Publication, uuid.UUID(publication["id"]))
         stored.status = PublicationStatus.APPROVED
+        stored.external_thumbnail_url = "https://cdn.example.test/rutube-preview.jpg"
         db.commit()
 
     fixed_now = datetime(2026, 8, 25, 12, 0, tzinfo=timezone.utc)
@@ -895,6 +1275,14 @@ def test_manual_view_reading_can_be_edited_and_corrected(client, monkeypatch):
     reading = created.json()
     assert reading["status"] == "pending"
     assert reading["reported_value"] == 120000
+    assert reading["video_card_id"] == card["id"]
+    assert reading["publication_title"] == "Manual views"
+    assert reading["platform"] == "rutube"
+    assert reading["thumbnail_url"] == "https://cdn.example.test/rutube-preview.jpg"
+
+    listed = client.get("/api/v1/me/view-readings")
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["items"][0]["thumbnail_url"] == reading["thumbnail_url"]
     duplicate = client.post(
         f"/api/v1/me/publications/{publication['id']}/view-readings",
         json={"value": 125000},
@@ -1009,3 +1397,123 @@ def test_youtube_view_scheduler_and_worker_store_daily_reading(client):
             value=900000,
             suspicious_growth_threshold=500000,
         ) == ["views_decreased"]
+
+def _submitted_rutube_publication(client, suffix: str) -> dict:
+    blogger = create_blogger(client, f"rutube-worker-{suffix}@example.com")
+    account = create_social_account(client, blogger.id, platform=Platform.RUTUBE)
+    login(client, blogger.email)
+    card = create_card(client, title=f"RUTUBE {suffix}")
+    video_id = ("a" * 30) + suffix[-2:]
+    publication = create_publication(
+        client,
+        card["id"],
+        account.id,
+        f"https://rutube.ru/video/{video_id}/",
+    )
+    submitted = client.post(
+        f"/api/v1/me/publications/{publication['id']}/submissions",
+        headers=csrf_headers(client),
+    )
+    assert submitted.status_code == 201
+    assert submitted.json()["enrichment_status"] == "pending"
+    return submitted.json()
+
+
+def _rutube_video(video_id: str, *, hits: int = 654321) -> RutubeVideo:
+    return RutubeVideo.model_validate(
+        {
+            "id": video_id,
+            "title": "Public RUTUBE title",
+            "thumbnail_url": "https://pic.rutube.ru/video/test.jpg",
+            "duration": 123,
+            "created_ts": "2026-09-20T10:30:00Z",
+            "author": {"id": 42, "name": "RUTUBE channel"},
+            "hits": hits,
+        }
+    )
+
+
+def test_rutube_scheduler_and_worker_store_metadata_and_views(client):
+    publication = _submitted_rutube_publication(client, "01")
+    producer = CapturingProducer()
+    session_factory = client.app.state.test_session
+
+    assert dispatch_rutube_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is True
+    assert producer.messages[0]["queue"] == "rutube"
+    command = RutubeEnrichmentCommand.model_validate(producer.messages[0]["args"][0])
+
+    class PublicClient:
+        def fetch_video(self, external_id):
+            return _rutube_video(external_id)
+
+    settings = RutubeWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_rutube_enrichment(command, settings, session_factory, client=PublicClient())
+
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication["id"]))
+        stored.status = PublicationStatus.APPROVED
+        assert stored.external_title == "Public RUTUBE title"
+        assert stored.external_author_id == "42"
+        assert stored.external_author_name == "RUTUBE channel"
+        assert stored.external_duration_seconds == 123
+        assert stored.external_thumbnail_url == "https://pic.rutube.ru/video/test.jpg"
+        assert db.scalar(select(RutubeEnrichmentJob)).state == "succeeded"
+        db.commit()
+
+    view_producer = CapturingProducer()
+    now = datetime(2026, 9, 25, 20, 0, tzinfo=timezone.utc)
+    assert dispatch_rutube_view(
+        now=now, session_factory=session_factory, task_producer=view_producer
+    ) is True
+    view_command = RutubeViewCollectionCommand.model_validate(
+        view_producer.messages[0]["args"][0]
+    )
+    execute_rutube_view_collection(
+        view_command, settings, session_factory, client=PublicClient()
+    )
+
+    with session_factory() as db:
+        reading = db.scalar(select(ViewReading))
+        assert reading.source == ReadingSource.RUTUBE_PUBLIC
+        assert reading.reported_value == 654321
+        assert reading.status == ReadingStatus.PENDING
+        assert reading.accepted_value is None
+        assert "approximate_public_counter" in reading.risk_flags
+        assert db.scalar(select(RutubeViewCollectionJob)).state == "succeeded"
+
+
+def test_rutube_429_blocks_scheduler_until_retry_after(client):
+    _submitted_rutube_publication(client, "02")
+    producer = CapturingProducer()
+    session_factory = client.app.state.test_session
+    assert dispatch_rutube_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is True
+    command = RutubeEnrichmentCommand.model_validate(producer.messages[0]["args"][0])
+
+    class LimitedClient:
+        def fetch_video(self, external_id):
+            raise RutubeClientError(429, "rutube_http_error", "120")
+
+    settings = RutubeWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_rutube_enrichment(command, settings, session_factory, client=LimitedClient())
+
+    with session_factory() as db:
+        job = db.scalar(select(RutubeEnrichmentJob))
+        provider = db.get(ExternalProviderState, "rutube")
+        assert job.state == "retry_wait"
+        assert provider.status == "blocked"
+        assert provider.block_reason == "rutube_http_error"
+
+    assert dispatch_rutube_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is False
+    assert len(producer.messages) == 1

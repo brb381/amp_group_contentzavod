@@ -55,6 +55,8 @@ class AuditAction:
     PUBLICATION_DELETED = "content.publication_deleted"
     PUBLICATION_SUBMITTED = "content.publication_submitted"
     PUBLICATION_REVIEWED = "moderation.publication_reviewed"
+    PUBLICATION_DEACTIVATED = "content.publication_deactivated"
+    PUBLICATION_PROMO_ISSUED = "content.publication_promo_issued"
     VIEW_READING_CREATED = "readings.created"
     VIEW_READING_UPDATED = "readings.updated"
     VIEW_READING_REVIEWED = "moderation.view_reading_reviewed"
@@ -89,6 +91,7 @@ class AuditAction:
     LEGAL_DOCUMENT_PUBLISHED = "legal.document_published"
     LEGAL_DOCUMENT_ACCEPTED = "legal.document_accepted"
     PERSONAL_DATA_CONSENT_WITHDRAWN = "legal.personal_data_consent_withdrawn"
+    PROGRAM_SETTINGS_UPDATED = "admin.program_settings_updated"
 
 
 @dataclass(frozen=True)

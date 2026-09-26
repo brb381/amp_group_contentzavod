@@ -30,6 +30,9 @@ def enum_values(enum_class: type[enum.Enum]) -> list[str]:
 class ReadingSource(str, enum.Enum):
     MANUAL = "manual"
     YOUTUBE_API = "youtube_api"
+    TIKTOK_PUBLIC = "tiktok_public"
+    VK_PUBLIC = "vk_public"
+    RUTUBE_PUBLIC = "rutube_public"
 
 
 class ReadingStatus(str, enum.Enum):

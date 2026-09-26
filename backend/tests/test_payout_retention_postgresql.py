@@ -55,6 +55,7 @@ def test_postgresql_allows_only_controlled_payout_pii_anonymization(
                 role=Role.BLOGGER,
                 status=AccountStatus.DELETED,
                 status_changed_at=old,
+                collaboration_ended_at=old,
                 email_verified_at=old,
             )
         )

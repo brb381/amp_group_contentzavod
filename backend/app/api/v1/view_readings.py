@@ -10,6 +10,7 @@ from app.auth.dependencies import CurrentUser, require_active_roles, require_csr
 from app.auth.models import Role, User
 from app.config import Settings, get_settings
 from app.database.session import get_db
+from app.program.service import suspicious_growth_threshold
 from app.readings.models import ReadingStatus
 from app.readings.schemas import (
     ReadingCorrectionRequest,
@@ -57,7 +58,7 @@ def post_manual_reading(
         actor=user,
         publication_id=publication_id,
         value=payload.value,
-        suspicious_growth_threshold=settings.suspicious_monthly_view_growth,
+        suspicious_growth_threshold=suspicious_growth_threshold(db, settings.suspicious_monthly_view_growth),
         audit_context=context_from_request(request),
     )
     return reading_detail(db, reading)
@@ -81,7 +82,7 @@ def patch_manual_reading(
         actor=user,
         reading_id=reading_id,
         value=payload.value,
-        suspicious_growth_threshold=settings.suspicious_monthly_view_growth,
+        suspicious_growth_threshold=suspicious_growth_threshold(db, settings.suspicious_monthly_view_growth),
         audit_context=context_from_request(request),
     )
     return reading_detail(db, reading)

@@ -108,6 +108,7 @@ def _seed_dashboard_data(client):
             parse_status=PublicationParseStatus.PARSED,
             availability=PublicationAvailability.AVAILABLE,
             enrichment_status=PublicationEnrichmentStatus.NOT_REQUESTED,
+            external_thumbnail_url="https://cdn.example.test/dashboard-preview.jpg",
         )
         db.add(publication)
         db.flush()
@@ -214,6 +215,85 @@ def test_creator_dashboard_uses_readings_billing_and_balance(client):
     }
     assert body["attention"]["missing_manual_readings"] == 0
     assert body["top_video_cards"][0]["total_views"] == 1500
+    assert body["top_video_cards"][0]["thumbnail_url"] == "https://cdn.example.test/dashboard-preview.jpg"
+
+
+def test_creator_dashboard_displays_pending_public_counter(client):
+    _seed_dashboard_data(client)
+    with client.app.state.test_session() as db:
+        reading = db.scalar(
+            select(ViewReading).where(ViewReading.idempotency_key == "dashboard-current")
+        )
+        reading.source = ReadingSource.VK_PUBLIC
+        reading.status = ReadingStatus.PENDING
+        reading.accepted_value = None
+        reading.reported_value = 1550
+        reading.risk_flags = ["approximate_public_counter"]
+        db.commit()
+    _login(client, "dashboard-blogger@example.com")
+
+    response = client.get("/api/v1/me/dashboard")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["views"]["total_views"] == 1550
+    assert body["top_video_cards"][0]["total_views"] == 1550
+
+
+def test_creator_dashboard_hides_pending_manual_counter(client):
+    _seed_dashboard_data(client)
+    with client.app.state.test_session() as db:
+        reading = db.scalar(
+            select(ViewReading).where(ViewReading.idempotency_key == "dashboard-current")
+        )
+        reading.status = ReadingStatus.PENDING
+        reading.accepted_value = None
+        reading.reported_value = 999999
+        db.commit()
+    _login(client, "dashboard-blogger@example.com")
+
+    response = client.get("/api/v1/me/dashboard")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["views"]["total_views"] == 1000
+    assert body["top_video_cards"][0]["total_views"] == 1000
+
+@pytest.mark.parametrize("role", [Role.ADMIN, Role.MODERATOR, Role.MANAGER])
+def test_operational_staff_can_open_blogger_card(client, role):
+    _seed_dashboard_data(client)
+    email = _seed_staff(client, role, f"{role.value}-blogger-card")
+    _login(client, email)
+    with client.app.state.test_session() as db:
+        blogger_id = db.scalar(
+            select(User.id).where(User.email == "dashboard-blogger@example.com")
+        )
+
+    response = client.get(f"/api/v1/staff/bloggers/{blogger_id}/card")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["profile"]["display_name"] == "Dashboard creator"
+    assert body["dashboard"]["views"]["total_views"] == 1500
+    assert body["publications"][0]["platform"] == "vk"
+    assert body["publications"][0]["current_views"] == 1500
+
+
+@pytest.mark.parametrize("role", [Role.BLOGGER, Role.FINANCE, Role.ANALYST])
+def test_non_operational_roles_cannot_open_blogger_card(client, role):
+    _seed_dashboard_data(client)
+    email = (
+        "dashboard-blogger@example.com"
+        if role == Role.BLOGGER
+        else _seed_staff(client, role, f"{role.value}-blogger-card-denied")
+    )
+    _login(client, email)
+    with client.app.state.test_session() as db:
+        blogger_id = db.scalar(
+            select(User.id).where(User.email == "dashboard-blogger@example.com")
+        )
+
+    assert client.get(f"/api/v1/staff/bloggers/{blogger_id}/card").status_code == 403
 
 
 def test_staff_analytics_is_available_to_analyst(client):

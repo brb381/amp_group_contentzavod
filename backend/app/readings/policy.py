@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
@@ -60,3 +61,11 @@ def risk_flags(
     ):
         flags.append("unusual_growth")
     return flags
+
+def selected_for_random_review(publication_id, period: date, percent: int) -> bool:
+    if percent <= 0:
+        return False
+    if percent >= 100:
+        return True
+    digest = hashlib.sha256(f"{publication_id}:{period.isoformat()}".encode("ascii")).digest()
+    return int.from_bytes(digest[:4], "big") % 100 < percent

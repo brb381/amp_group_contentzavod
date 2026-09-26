@@ -10,6 +10,10 @@ from app.audit import models as _audit_models  # noqa: F401
 from app.catalog import models as _catalog_models  # noqa: F401
 from app.content import models as _content_models  # noqa: F401
 from app.youtube import models as _youtube_models  # noqa: F401
+from app.integrations import models as _integration_models  # noqa: F401
+from app.tiktok import models as _tiktok_models  # noqa: F401
+from app.vk import models as _vk_models  # noqa: F401
+from app.rutube import models as _rutube_models  # noqa: F401
 from app.readings import models as _reading_models  # noqa: F401
 from app.billing import models as _billing_models  # noqa: F401
 from app.payouts import models as _payout_models  # noqa: F401
@@ -19,6 +23,7 @@ from app.support import models as _support_models  # noqa: F401
 from app.lifecycle import models as _lifecycle_models  # noqa: F401
 from app.account_deletion import models as _account_deletion_models  # noqa: F401
 from app.legal import models as _legal_models  # noqa: F401
+from app.program import models as _program_models  # noqa: F401
 from app.database.base import Base
 from app.database.config import DatabaseSettings
 

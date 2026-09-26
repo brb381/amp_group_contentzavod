@@ -45,6 +45,8 @@ from app.creators.models import (
 )
 from app.database.base import Base
 from app.errors import APIError
+from app.notifications.catalog import DEFAULT_NOTIFICATION_TEMPLATES
+from app.notifications.models import NotificationChannel, NotificationTemplateVersion
 from app.payouts.models import (
     PayoutDetails,
     PayoutEvent,
@@ -100,6 +102,29 @@ def postgres_payout_session_factory():
     )
     try:
         Base.metadata.create_all(engine)
+        test_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+        with test_session.begin() as db:
+            for code, definition in DEFAULT_NOTIFICATION_TEMPLATES.items():
+                db.add_all(
+                    [
+                        NotificationTemplateVersion(
+                            code=code,
+                            channel=NotificationChannel.IN_APP,
+                            version=1,
+                            title_template=definition["title"],
+                            body_template=definition["body"],
+                            allowed_variables=definition["variables"],
+                        ),
+                        NotificationTemplateVersion(
+                            code=code,
+                            channel=NotificationChannel.EMAIL,
+                            version=1,
+                            subject_template=definition["title"],
+                            body_template=definition["body"],
+                            allowed_variables=definition["variables"],
+                        ),
+                    ]
+                )
         yield sessionmaker(
             bind=engine,
             autoflush=False,

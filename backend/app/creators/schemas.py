@@ -112,6 +112,7 @@ class ProfileSummaryResponse(BaseModel):
     city_country: str | None
     content_topics: str | None
     recipient_status: RecipientStatus | None
+    avatar_url: str | None = None
     status: ProfileStatus
     moderation_reason: str | None
     submitted_at: datetime | None

@@ -135,8 +135,34 @@ def publication_counts_by_card(
     return counts
 
 
+def publication_thumbnails_by_card(
+    db: Session, card_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    if not card_ids:
+        return {}
+    rows = db.execute(
+        select(Publication.video_card_id, Publication.external_thumbnail_url)
+        .where(
+            Publication.video_card_id.in_(card_ids),
+            Publication.deleted_at.is_(None),
+            Publication.external_thumbnail_url.is_not(None),
+        )
+        .order_by(
+            Publication.video_card_id,
+            Publication.updated_at.desc(),
+            Publication.id.desc(),
+        )
+    )
+    thumbnails: dict[uuid.UUID, str] = {}
+    for card_id, thumbnail_url in rows:
+        thumbnails.setdefault(card_id, thumbnail_url)
+    return thumbnails
+
+
 def video_card_response(
-    card: VideoCard, counts: dict[PublicationStatus, int] | None = None
+    card: VideoCard,
+    counts: dict[PublicationStatus, int] | None = None,
+    thumbnail_url: str | None = None,
 ) -> VideoCardResponse:
     counts = counts or {}
     reported_product = None
@@ -153,6 +179,7 @@ def video_card_response(
         product_snapshot=card.product_snapshot,
         reported_product=reported_product,
         is_product_resolved=card.product_id is not None,
+        thumbnail_url=thumbnail_url,
         status=_derived_card_status(counts),
         publication_summary={
             "total": sum(counts.values()),

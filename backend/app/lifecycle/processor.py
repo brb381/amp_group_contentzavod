@@ -28,6 +28,9 @@ from app.lifecycle.policy import block_due_at, suspension_due_at, warning_due_at
 from app.notifications.models import NotificationSeverity
 from app.notifications.service import NotificationCommand, create_notification
 from app.readings.models import YouTubeViewCollectionJob
+from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
+from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
+from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -151,36 +154,29 @@ def _suspend(db, user: User, lifecycle: CreatorLifecycle, job: LifecycleJob, now
                     created_at=now,
                 )
             )
-        db.execute(
-            update(YouTubeEnrichmentJob)
-            .where(
-                YouTubeEnrichmentJob.publication_id.in_(publication_ids),
-                YouTubeEnrichmentJob.state.in_(
-                    ("pending", "queued", "processing", "retry_wait")
-                ),
+        for job_model in (
+            YouTubeEnrichmentJob,
+            YouTubeViewCollectionJob,
+            TikTokEnrichmentJob,
+            TikTokViewCollectionJob,
+            VKEnrichmentJob,
+            VKViewCollectionJob,
+            RutubeEnrichmentJob,
+            RutubeViewCollectionJob,
+        ):
+            db.execute(
+                update(job_model)
+                .where(
+                    job_model.publication_id.in_(publication_ids),
+                    job_model.state.in_(("pending", "queued", "processing", "retry_wait")),
+                )
+                .values(
+                    state="failed",
+                    lease_until=None,
+                    dispatch_id=None,
+                    last_error_code="account_suspended",
+                )
             )
-            .values(
-                state="failed",
-                lease_until=None,
-                dispatch_id=None,
-                last_error_code="account_suspended",
-            )
-        )
-        db.execute(
-            update(YouTubeViewCollectionJob)
-            .where(
-                YouTubeViewCollectionJob.publication_id.in_(publication_ids),
-                YouTubeViewCollectionJob.state.in_(
-                    ("pending", "queued", "processing", "retry_wait")
-                ),
-            )
-            .values(
-                state="failed",
-                lease_until=None,
-                dispatch_id=None,
-                last_error_code="account_suspended",
-            )
-        )
     _notify(
         db,
         user=user,

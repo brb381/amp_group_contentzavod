@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.creators.schemas import ProfileResponse
+
 
 class PlatformCount(BaseModel):
     platform: str
@@ -50,6 +52,7 @@ class CreatorVideoRankingItem(BaseModel):
     publications: int
     total_views: int
     current_period_new_views: int
+    thumbnail_url: str | None = None
 
 
 class CreatorDashboardResponse(BaseModel):
@@ -61,6 +64,36 @@ class CreatorDashboardResponse(BaseModel):
     calculation: CreatorCalculationSummary
     attention: CreatorAttentionSummary
     top_video_cards: list[CreatorVideoRankingItem]
+
+
+class StaffBloggerAccount(BaseModel):
+    id: uuid.UUID
+    email: str
+    status: str
+    email_verified_at: datetime | None
+    created_at: datetime
+
+
+class StaffBloggerPublication(BaseModel):
+    id: uuid.UUID
+    video_card_id: uuid.UUID
+    card_title: str
+    product_name: str
+    platform: str
+    status: str
+    availability: str
+    enrichment_status: str
+    url: str
+    thumbnail_url: str | None
+    current_views: int
+    updated_at: datetime
+
+
+class StaffBloggerCardResponse(BaseModel):
+    account: StaffBloggerAccount
+    profile: ProfileResponse | None
+    dashboard: CreatorDashboardResponse
+    publications: list[StaffBloggerPublication]
 
 
 class QueueCounter(BaseModel):

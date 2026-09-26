@@ -2,7 +2,7 @@ import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, Uuid, func
+from sqlalchemy import CheckConstraint, DateTime, Enum, ForeignKey, Integer, JSON, LargeBinary, String, Text, UniqueConstraint, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database.base import Base
@@ -48,6 +48,8 @@ class CreatorProfile(Base):
     telegram: Mapped[str | None] = mapped_column(String(128), nullable=True)
     city_country: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content_topics: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    avatar_data: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True, deferred=True)
+    avatar_content_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     recipient_status: Mapped[RecipientStatus | None] = mapped_column(
         Enum(RecipientStatus, values_callable=enum_values, name="recipientstatus"), nullable=True
     )

@@ -24,6 +24,7 @@ from app.api.v1.support import router as support_router
 from app.api.v1.lifecycle import router as lifecycle_router
 from app.api.v1.account_deletion import router as account_deletion_router
 from app.api.v1.legal import router as legal_router
+from app.api.v1.program_settings import router as program_settings_router
 from app.api.errors import (
     api_error_handler,
     database_operational_error_handler,
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     app.include_router(lifecycle_router, prefix="/api/v1")
     app.include_router(account_deletion_router, prefix="/api/v1")
     app.include_router(legal_router, prefix="/api/v1")
+    app.include_router(program_settings_router, prefix="/api/v1")
     app.add_exception_handler(APIError, api_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_error_handler)
     app.add_exception_handler(RequestValidationError, validation_error_handler)

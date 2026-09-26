@@ -27,7 +27,9 @@ from app.creators.service import (
     get_user_profile,
     list_social_accounts,
     profile_response,
+    remove_profile_avatar,
     review_profile,
+    set_profile_avatar,
     submit_profile,
     update_social_account,
     upsert_profile,
@@ -36,6 +38,21 @@ from app.database.session import get_db
 from app.errors import APIError
 from app.legal.dependencies import CurrentParticipant
 
+
+AVATAR_MAX_BYTES = 1024 * 1024
+AVATAR_TYPES = {
+    "image/jpeg": lambda data: data.startswith(b"\xff\xd8\xff"),
+    "image/png": lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"),
+    "image/webp": lambda data: len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP",
+}
+
+
+def _validated_avatar_type(data: bytes, declared_type: str) -> str:
+    content_type = declared_type.split(";", 1)[0].strip().lower()
+    detector = AVATAR_TYPES.get(content_type)
+    if not detector or not detector(data):
+        raise APIError(422, "AVATAR_FORMAT_INVALID", "Avatar must be a valid JPEG, PNG, or WebP image")
+    return content_type
 
 router = APIRouter(tags=["creator profiles"])
 Moderator = Annotated[User, Depends(require_roles(Role.MODERATOR, Role.ADMIN))]
@@ -57,6 +74,68 @@ def put_my_profile(
 ) -> ProfileResponse:
     return profile_response(db, upsert_profile(db, user, payload, context_from_request(request)))
 
+
+@router.get("/me/profile/avatar")
+def get_my_avatar(
+    user: CurrentUser,
+    db: Session = Depends(get_db, scope="function"),
+) -> Response:
+    profile = get_user_profile(db, user.id)
+    if not profile or not profile.avatar_content_type or not profile.avatar_data:
+        raise APIError(404, "AVATAR_NOT_FOUND", "Avatar was not found")
+    return Response(
+        content=profile.avatar_data,
+        media_type=profile.avatar_content_type,
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Length": str(len(profile.avatar_data)),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.put("/me/profile/avatar", response_model=ProfileResponse)
+async def put_my_avatar(
+    request: Request,
+    user: CurrentParticipant,
+    _: None = Depends(require_csrf),
+    db: Session = Depends(get_db, scope="function"),
+) -> ProfileResponse:
+    raw_length = request.headers.get("content-length")
+    if raw_length:
+        try:
+            if int(raw_length) > AVATAR_MAX_BYTES:
+                raise APIError(413, "AVATAR_TOO_LARGE", "Avatar must not exceed 1 MB")
+        except ValueError as error:
+            raise APIError(400, "CONTENT_LENGTH_INVALID", "Content-Length is invalid") from error
+    buffer = bytearray()
+    async for chunk in request.stream():
+        buffer.extend(chunk)
+        if len(buffer) > AVATAR_MAX_BYTES:
+            raise APIError(413, "AVATAR_TOO_LARGE", "Avatar must not exceed 1 MB")
+    if not buffer:
+        raise APIError(422, "AVATAR_EMPTY", "Avatar file is empty")
+    data = bytes(buffer)
+    content_type = _validated_avatar_type(data, request.headers.get("content-type", ""))
+    profile = set_profile_avatar(
+        db,
+        user,
+        data=data,
+        content_type=content_type,
+        audit_context=context_from_request(request),
+    )
+    return profile_response(db, profile)
+
+
+@router.delete("/me/profile/avatar", status_code=status.HTTP_204_NO_CONTENT)
+def delete_my_avatar(
+    request: Request,
+    user: CurrentParticipant,
+    _: None = Depends(require_csrf),
+    db: Session = Depends(get_db, scope="function"),
+) -> Response:
+    remove_profile_avatar(db, user, audit_context=context_from_request(request))
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 @router.get("/me/social-accounts", response_model=list[SocialAccountResponse])
 def get_my_social_accounts(user: CurrentUser, db: Session = Depends(get_db, scope="function")) -> list[SocialAccountResponse]:

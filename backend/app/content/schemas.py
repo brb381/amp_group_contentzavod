@@ -11,6 +11,7 @@ from app.content.models import (
     PublicationEnrichmentStatus,
     PublicationParseStatus,
     PublicationStatus,
+    PromoMarketplace,
 )
 from app.platforms import Platform
 
@@ -128,6 +129,7 @@ class VideoCardResponse(BaseModel):
     product_snapshot: ProductSnapshot | None
     reported_product: ReportedProduct | None
     is_product_resolved: bool
+    thumbnail_url: str | None = None
     status: Literal[
         "draft",
         "pending_review",
@@ -194,6 +196,7 @@ class PublicationResponse(BaseModel):
     external_thumbnail_url: str | None
     enriched_at: datetime | None
     enrichment_error_code: str | None
+    current_views: int | None = None
     moderation_reason: str | None
     submitted_at: datetime | None
     reviewed_at: datetime | None
@@ -247,10 +250,44 @@ class PublicationReviewRequest(BaseModel):
         return self
 
 
+class PublicationDeactivationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=2000)
+
+    @field_validator("reason")
+    @classmethod
+    def clean_reason(cls, value: str) -> str:
+        return _clean_required(value)
+
+
+class PromoIssuanceCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    marketplace: PromoMarketplace
+    note: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("note")
+    @classmethod
+    def clean_note(cls, value: str | None) -> str | None:
+        return _clean_optional(value)
+
+
+class PromoIssuanceResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    marketplace: PromoMarketplace
+    issued_by_user_id: uuid.UUID
+    note: str | None
+    issued_at: datetime
+
+
 class PublicationModerationItem(BaseModel):
     publication: PublicationResponse
     card_title: str
     is_product_resolved: bool
+    thumbnail_url: str | None = None
     creator_user_id: uuid.UUID
     creator_email: str
     creator_full_name: str | None
@@ -266,6 +303,7 @@ class PublicationModerationDetail(BaseModel):
     creator_full_name: str | None
     creator_display_name: str | None
     history: list[PublicationHistoryResponse] = Field(default_factory=list)
+    promo_issuances: list[PromoIssuanceResponse] = Field(default_factory=list)
 
 
 class PublicationModerationListResponse(BaseModel):

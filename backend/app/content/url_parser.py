@@ -5,7 +5,6 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from app.content.models import PublicationParseStatus
 from app.platforms import Platform
 
-
 PLATFORM_DOMAINS = {
     Platform.YOUTUBE: ("youtube.com", "youtu.be"),
     Platform.VK: ("vk.com", "vkvideo.ru"),
@@ -14,6 +13,7 @@ PLATFORM_DOMAINS = {
     Platform.DZEN: ("dzen.ru", "zen.yandex.ru"),
     Platform.RUTUBE: ("rutube.ru",),
 }
+
 TRACKING_QUERY_KEYS = {"fbclid", "gclid", "ref", "source"}
 
 
@@ -31,12 +31,11 @@ class ParsedPublicationURL:
 def _host_allowed(host: str, domains: tuple[str, ...]) -> bool:
     return any(host == domain or host.endswith(f".{domain}") for domain in domains)
 
-
 def _external_id(platform: Platform, host: str, path: str, query: dict[str, str]) -> str | None:
     patterns = {
         Platform.TIKTOK: r"/(?:@[^/]+/)?video/(\d+)",
         Platform.INSTAGRAM: r"/reels?/([A-Za-z0-9_-]+)",
-        Platform.VK: r"/clip(-?\d+_\d+)",
+        Platform.VK: r"/(?:clip|video)(-?\d+_\d+)",
         Platform.DZEN: r"/video/watch/([A-Za-z0-9_-]+)",
         Platform.RUTUBE: r"/(?:video|shorts)/([A-Za-z0-9_-]+)",
     }
@@ -45,6 +44,12 @@ def _external_id(platform: Platform, host: str, path: str, query: dict[str, str]
             return path.strip("/").split("/")[0] or None
         match = re.match(r"/(?:shorts|embed)/([A-Za-z0-9_-]+)", path)
         return match.group(1) if match else query.get("v")
+    if platform == Platform.VK:
+        match = re.search(patterns[Platform.VK], path)
+        if match:
+            return match.group(1)
+        match = re.search(r"(?:^|/)video(-?\d+_\d+)", query.get("z", ""))
+        return match.group(1) if match else None
     pattern = patterns.get(platform)
     match = re.search(pattern, path) if pattern else None
     return match.group(1) if match else None
@@ -53,7 +58,7 @@ def _external_id(platform: Platform, host: str, path: str, query: dict[str, str]
 def _canonical_identity_url(platform: Platform, external_id: str) -> str:
     paths = {
         Platform.YOUTUBE: f"/shorts/{external_id}",
-        Platform.VK: f"/clip{external_id}",
+        Platform.VK: f"/video{external_id}",
         Platform.TIKTOK: f"/video/{external_id}",
         Platform.INSTAGRAM: f"/reel/{external_id}",
         Platform.DZEN: f"/video/watch/{external_id}",

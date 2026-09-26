@@ -31,6 +31,10 @@ from app.notifications.service import NotificationCommand, create_notification
 from app.lifecycle.activity import record_creator_activity
 from app.lifecycle.models import ActivityKind
 from app.platforms import Platform
+from app.readings.models import ReadingSource, ReadingStatus, ViewReading
+from app.tiktok.models import TikTokEnrichmentJob
+from app.vk.models import VKEnrichmentJob
+from app.rutube.models import RutubeEnrichmentJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -191,6 +195,52 @@ def list_publications(
     )
     return publications, total, math.ceil(total / page_size)
 
+
+def publication_responses_with_views(
+    db: Session, publications: list[Publication]
+) -> list[PublicationResponse]:
+    if not publications:
+        return []
+    ranked = (
+        select(
+            ViewReading.publication_id.label("publication_id"),
+            func.coalesce(
+                ViewReading.accepted_value, ViewReading.reported_value
+            ).label("current_views"),
+            func.row_number()
+            .over(
+                partition_by=ViewReading.publication_id,
+                order_by=(ViewReading.captured_at.desc(), ViewReading.id.desc()),
+            )
+            .label("position"),
+        )
+        .where(
+            ViewReading.publication_id.in_([item.id for item in publications]),
+            (
+                (ViewReading.status == ReadingStatus.ACCEPTED)
+                | (
+                    (ViewReading.status == ReadingStatus.PENDING)
+                    & ViewReading.source.in_(
+                        (ReadingSource.TIKTOK_PUBLIC, ReadingSource.VK_PUBLIC, ReadingSource.RUTUBE_PUBLIC)
+                    )
+                )
+            ),
+        )
+        .subquery()
+    )
+    views = dict(
+        db.execute(
+            select(ranked.c.publication_id, ranked.c.current_views).where(
+                ranked.c.position == 1
+            )
+        ).all()
+    )
+    return [
+        PublicationResponse.model_validate(publication).model_copy(
+            update={"current_views": views.get(publication.id)}
+        )
+        for publication in publications
+    ]
 
 def get_publication(db: Session, *, user: User, publication_id: uuid.UUID) -> Publication:
     _require_blogger(user)
@@ -433,6 +483,78 @@ def submit_publication(
         publication.availability = PublicationAvailability.UNKNOWN
         publication.enrichment_error_code = None
     elif publication.platform == Platform.YOUTUBE:
+        publication.enrichment_status = PublicationEnrichmentStatus.FAILED
+        publication.enrichment_error_code = "external_id_missing"
+    elif publication.platform == Platform.TIKTOK:
+        job = db.scalar(
+            select(TikTokEnrichmentJob)
+            .where(TikTokEnrichmentJob.publication_id == publication.id)
+            .with_for_update()
+        )
+        if job:
+            job.state = "pending"
+            job.attempt_count = 0
+            job.available_at = publication.submitted_at
+            job.lease_until = None
+            job.dispatch_id = None
+            job.last_error_code = None
+        else:
+            db.add(
+                TikTokEnrichmentJob(
+                    publication_id=publication.id,
+                    available_at=publication.submitted_at,
+                )
+            )
+        publication.enrichment_status = PublicationEnrichmentStatus.PENDING
+        publication.availability = PublicationAvailability.UNKNOWN
+        publication.enrichment_error_code = None
+    elif publication.platform == Platform.VK:
+        job = db.scalar(
+            select(VKEnrichmentJob)
+            .where(VKEnrichmentJob.publication_id == publication.id)
+            .with_for_update()
+        )
+        if job:
+            job.state = "pending"
+            job.attempt_count = 0
+            job.available_at = publication.submitted_at
+            job.lease_until = None
+            job.dispatch_id = None
+            job.last_error_code = None
+        else:
+            db.add(
+                VKEnrichmentJob(
+                    publication_id=publication.id,
+                    available_at=publication.submitted_at,
+                )
+            )
+        publication.enrichment_status = PublicationEnrichmentStatus.PENDING
+        publication.availability = PublicationAvailability.UNKNOWN
+        publication.enrichment_error_code = None
+    elif publication.platform == Platform.RUTUBE and publication.external_id:
+        job = db.scalar(
+            select(RutubeEnrichmentJob)
+            .where(RutubeEnrichmentJob.publication_id == publication.id)
+            .with_for_update()
+        )
+        if job:
+            job.state = "pending"
+            job.attempt_count = 0
+            job.available_at = publication.submitted_at
+            job.lease_until = None
+            job.dispatch_id = None
+            job.last_error_code = None
+        else:
+            db.add(
+                RutubeEnrichmentJob(
+                    publication_id=publication.id,
+                    available_at=publication.submitted_at,
+                )
+            )
+        publication.enrichment_status = PublicationEnrichmentStatus.PENDING
+        publication.availability = PublicationAvailability.UNKNOWN
+        publication.enrichment_error_code = None
+    elif publication.platform == Platform.RUTUBE:
         publication.enrichment_status = PublicationEnrichmentStatus.FAILED
         publication.enrichment_error_code = "external_id_missing"
     record_publication_history(

@@ -14,16 +14,19 @@ React client -> FastAPI -> PostgreSQL
                          v
                     scheduler -> Redis/Celery -> email worker -> SMTP
                               -> Redis/Celery -> YouTube worker -> YouTube API
+                              -> Redis/Celery -> platform worker -> TikTok/VK/RUTUBE public API
                               -> Redis/Celery -> calculation worker -> PostgreSQL
                               -> Redis/Celery -> export worker -> S3/MinIO
 host scheduler -> creator retention command -> PostgreSQL
 ```
 
 - API validates HTTP input, authorizes the caller and commits business changes.
-- Scheduler admits due database records to a named queue. Email, YouTube and
-  calculation dispatchers have separate error boundaries.
+- Scheduler admits due database records to a named queue. Every dispatcher has its own
+  error boundary, so one provider cannot stop unrelated work.
 - Email worker only claims and sends a prepared email command.
 - YouTube worker only claims a prepared batch, calls YouTube and records the outcome.
+- TikTok, VK and RUTUBE workers each claim one prepared platform command, call only
+  their own public provider endpoint and record the outcome.
 - Calculation worker only claims one prepared closed-period job and writes its snapshot.
 - Export worker reads one bounded report snapshot, generates CSV/XLSX and uploads it.
 - PostgreSQL stores leases, retries, quota reservations and provider availability.
@@ -69,6 +72,50 @@ state on its next iteration.
 
 Daily quota is tracked by the YouTube Pacific-time quota date. Temporary `429` and
 provider failures use `Retry-After` when available, otherwise bounded backoff.
+
+### TikTok
+
+Submitting a TikTok publication creates one `tiktok_enrichment_jobs` row. The scheduler
+leases one due row and publishes a self-contained command to the dedicated `tiktok`
+queue. The TikTok worker only calls TikTok, validates the external response and persists
+the outcome; it does not decide whether a publication should be collected.
+
+Public title, author and thumbnail metadata come from TikTok oEmbed. Period-end view
+collection reads the structured public video page without creator authorization. Because
+that counter is an approximate public signal rather than an authorized API measurement,
+the worker stores it as `tiktok_public` with `approximate_public_counter`; it remains
+pending until staff accept or correct it and therefore cannot enter billing automatically.
+
+The scheduler and worker share only the generic `external_provider_states` control row.
+On `429`, `403`, transport failure or invalid upstream data, the worker writes a bounded
+retry time and the scheduler stops admitting all TikTok work until that time. Celery does
+not perform hidden retries.
+
+### VK
+
+VK uses its own `vk` queue, worker and job tables. Submission creates an enrichment
+job; the scheduler only leases due work, and the VK worker only executes the supplied
+command and persists its result.
+
+Metadata comes from VK's public `video.getOembed` method. View collection follows the
+returned public embed URL and reads the structured `video.get` payload already present
+in the player page, so it does not require the publication author's authorization.
+Counters are stored as `vk_public` with `approximate_public_counter`, remain pending
+for staff review and never enter billing until accepted.
+
+### RUTUBE
+
+RUTUBE follows the same isolated flow with its own `rutube` queue and job tables.
+Submission creates one enrichment job; the scheduler leases ready work and sends a
+command containing the already validated publication URL and video ID. The worker builds
+a request only to RUTUBE's fixed public `/api/video/{id}/` endpoint, validates the
+response and stores title, author, publication time, duration and thumbnail.
+
+From the 25th through month end the scheduler creates one collection job per approved
+publication after the configured Moscow hour. The public `hits` counter is stored as
+`rutube_public` with `approximate_public_counter`, remains pending for staff review
+and cannot enter billing until accepted. A provider `429`, `403`, server error or
+transport failure writes the retry boundary to PostgreSQL; Celery itself does not retry.
 
 ### View readings
 
@@ -289,13 +336,13 @@ respond; otherwise it returns `503` without exposing connection details. The
 MinIO API policy permits bucket metadata checks but no listing of object contents.
 
 The independent `monitor` Compose service uses the `amp_monitor` database role,
-which can only read six job-state tables. Every poll it checks API readiness,
-Redis, Celery workers consuming all five queues, and the scheduler's per-dispatcher
+which can only read the job-state tables it monitors. Every poll it checks API readiness,
+Redis, Celery workers consuming all eight queues, and the scheduler's per-dispatcher
 Redis heartbeat. Scheduler heartbeats record both last success and last failure;
 an individual dispatcher is stale after 90 seconds without success. API, worker, and
 scheduler checks have a 90-second startup grace. Job checks alert on due jobs
-older than 5 minutes for email, 2 hours for YouTube, and 20 minutes for other
-queues; leases expired for over 2 minutes; or at least three failures in the last
+older than 5 minutes for email, 2 hours for platform collection jobs, and 20 minutes
+for other queues; leases expired for over 2 minutes; or at least three failures in the last
 hour. Empty queues are healthy. The monitor logs counts each poll and serves
 Prometheus-style metrics at `monitor:9101/metrics` inside the Compose network.
 SMTP alerts fire on changes and hourly reminders while problems persist;

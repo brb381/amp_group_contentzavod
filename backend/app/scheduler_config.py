@@ -12,6 +12,9 @@ class SchedulerSettings(BaseSettings):
     youtube_daily_working_limit: int = Field(default=9000, ge=1, le=10000)
     scheduler_poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60)
     youtube_collection_hour_moscow: int = Field(default=23, ge=0, le=23)
+    tiktok_collection_hour_moscow: int = Field(default=23, ge=0, le=23)
+    vk_collection_hour_moscow: int = Field(default=23, ge=0, le=23)
+    rutube_collection_hour_moscow: int = Field(default=23, ge=0, le=23)
     calculation_close_delay_minutes: int = Field(default=5, ge=0, le=1440)
 
 

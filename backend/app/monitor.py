@@ -20,8 +20,21 @@ from app.smtp import send_smtp_message, validate_smtp_transport
 
 
 logger = logging.getLogger(__name__)
-DISPATCHERS = ("email", "calculations", "exports", "lifecycle", "youtube-views", "youtube")
-QUEUES = ("email", "youtube", "calculations", "lifecycle", "exports")
+DISPATCHERS = (
+    "email",
+    "calculations",
+    "exports",
+    "lifecycle",
+    "youtube-views",
+    "youtube",
+    "tiktok-views",
+    "tiktok",
+    "vk-views",
+    "vk",
+    "rutube-views",
+    "rutube",
+)
+QUEUES = ("email", "youtube", "tiktok", "vk", "rutube", "calculations", "lifecycle", "exports")
 STARTUP_GRACE_SECONDS = 90
 SCHEDULER_MAX_AGE_SECONDS = 90
 REMINDER_SECONDS = 3600
@@ -41,6 +54,12 @@ JOB_SPECS = (
     JobSpec("email", "outbox_events", lease_column="processing_until", overdue_minutes=5, failed_time_column="failed_at"),
     JobSpec("youtube-enrichment", "youtube_enrichment_jobs", overdue_minutes=120),
     JobSpec("youtube-views", "youtube_view_collection_jobs", overdue_minutes=120),
+    JobSpec("tiktok-enrichment", "tiktok_enrichment_jobs", overdue_minutes=120),
+    JobSpec("tiktok-views", "tiktok_view_collection_jobs", overdue_minutes=120),
+    JobSpec("vk-enrichment", "vk_enrichment_jobs", overdue_minutes=120),
+    JobSpec("vk-views", "vk_view_collection_jobs", overdue_minutes=120),
+    JobSpec("rutube-enrichment", "rutube_enrichment_jobs", overdue_minutes=120),
+    JobSpec("rutube-views", "rutube_view_collection_jobs", overdue_minutes=120),
     JobSpec("calculations", "calculation_jobs"),
     JobSpec("lifecycle", "lifecycle_jobs"),
     JobSpec("exports", "export_jobs", state_column="status"),

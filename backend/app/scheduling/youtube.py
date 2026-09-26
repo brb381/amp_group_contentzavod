@@ -115,7 +115,7 @@ def dispatch_youtube_batch(
                         (PublicationStatus.PENDING_REVIEW, PublicationStatus.APPROVED)
                     ),
                 )
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=YouTubeEnrichmentJob, skip_locked=True)
             )
         )
         for stale_job in stale_jobs:
@@ -128,7 +128,7 @@ def dispatch_youtube_batch(
                     YouTubeEnrichmentJob.state.in_(("queued", "processing")),
                     YouTubeEnrichmentJob.lease_until < now,
                 )
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=YouTubeEnrichmentJob, skip_locked=True)
             )
         )
         for job in expired:
@@ -159,7 +159,7 @@ def dispatch_youtube_batch(
                 )
                 .order_by(YouTubeEnrichmentJob.created_at, YouTubeEnrichmentJob.id)
                 .limit(50)
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=YouTubeEnrichmentJob, skip_locked=True)
             )
         )
         if not jobs:
@@ -290,7 +290,7 @@ def dispatch_youtube_view_batch(
                     YouTubeViewCollectionJob.state.in_(("pending", "retry_wait")),
                     Publication.status != PublicationStatus.APPROVED,
                 )
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=YouTubeViewCollectionJob, skip_locked=True)
             )
         )
         for stale_job in stale_jobs:
@@ -326,7 +326,7 @@ def dispatch_youtube_view_batch(
                 )
                 .order_by(YouTubeViewCollectionJob.created_at, YouTubeViewCollectionJob.id)
                 .limit(50)
-                .with_for_update(skip_locked=True)
+                .with_for_update(of=YouTubeViewCollectionJob, skip_locked=True)
             )
         )
         if not jobs:

@@ -12,10 +12,16 @@ from app.catalog.models import Brand
 from app.clock import utc_now
 from app.dashboards.schemas import (
     CreatorDashboardResponse,
+    StaffBloggerCardResponse,
     StaffAnalyticsResponse,
     StaffDashboardResponse,
 )
-from app.dashboards.service import creator_dashboard, staff_analytics, staff_dashboard
+from app.dashboards.service import (
+    creator_dashboard,
+    staff_analytics,
+    staff_blogger_card,
+    staff_dashboard,
+)
 from app.database.session import get_db
 from app.platforms import Platform
 
@@ -58,6 +64,18 @@ def get_staff_dashboard(
     db: Session = Depends(get_db, scope="function"),
 ) -> StaffDashboardResponse:
     return staff_dashboard(db, now=utc_now())
+
+
+@router.get(
+    "/staff/bloggers/{blogger_id}/card",
+    response_model=StaffBloggerCardResponse,
+)
+def get_staff_blogger_card(
+    blogger_id: uuid.UUID,
+    _: StaffDashboardViewer,
+    db: Session = Depends(get_db, scope="function"),
+) -> StaffBloggerCardResponse:
+    return staff_blogger_card(db, blogger_id=blogger_id, now=utc_now())
 
 
 @router.get("/staff/analytics", response_model=StaffAnalyticsResponse)

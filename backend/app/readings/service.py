@@ -31,6 +31,25 @@ from app.readings.schemas import (
 REVIEWER_ROLES = {Role.MODERATOR, Role.MANAGER, Role.ADMIN}
 
 
+def _reading_response(
+    reading: ViewReading,
+    publication: Publication | None,
+    card: VideoCard | None,
+) -> ViewReadingResponse:
+    title = publication.external_title if publication else None
+    if not title and card:
+        title = card.title
+    response = ViewReadingResponse.model_validate(reading)
+    return response.model_copy(
+        update={
+            "video_card_id": publication.video_card_id if publication else None,
+            "publication_title": title,
+            "platform": publication.platform if publication else None,
+            "thumbnail_url": publication.external_thumbnail_url if publication else None,
+        }
+    )
+
+
 def _history(
     db: Session,
     reading: ViewReading,
@@ -62,8 +81,13 @@ def reading_detail(db: Session, reading: ViewReading) -> ViewReadingDetailRespon
             .order_by(ViewReadingHistory.created_at.desc(), ViewReadingHistory.id.desc())
         )
     )
+    publication, card = db.execute(
+        select(Publication, VideoCard)
+        .join(VideoCard, VideoCard.id == Publication.video_card_id)
+        .where(Publication.id == reading.publication_id)
+    ).one_or_none() or (None, None)
     return ViewReadingDetailResponse(
-        **ViewReadingResponse.model_validate(reading).model_dump(),
+        **_reading_response(reading, publication, card).model_dump(),
         history=history,
     )
 
@@ -97,8 +121,8 @@ def create_manual_reading(
     publication, _ = row
     if publication.status != PublicationStatus.APPROVED:
         raise APIError(409, "PUBLICATION_NOT_ACTIVE", "Only approved publications accept readings")
-    if publication.platform == Platform.YOUTUBE:
-        raise APIError(409, "READING_IS_AUTOMATIC", "YouTube readings are collected automatically")
+    if publication.platform in {Platform.YOUTUBE, Platform.TIKTOK, Platform.VK}:
+        raise APIError(409, "READING_IS_AUTOMATIC", "Platform readings are collected automatically")
 
     period = reporting_period(now)
     lock_reading_period_for_mutation(db, period)
@@ -229,18 +253,18 @@ def list_my_readings(
         .join(VideoCard)
         .where(*filters)
     ) or 0
-    items = list(
-        db.scalars(
-            select(ViewReading)
-            .join(Publication)
-            .join(VideoCard)
+    rows = list(
+        db.execute(
+            select(ViewReading, Publication, VideoCard)
+            .join(Publication, Publication.id == ViewReading.publication_id)
+            .join(VideoCard, VideoCard.id == Publication.video_card_id)
             .where(*filters)
             .order_by(ViewReading.captured_at.desc(), ViewReading.id.desc())
             .offset((page - 1) * page_size).limit(page_size)
         )
     )
     return ViewReadingListResponse(
-        items=items,
+        items=[_reading_response(reading, publication, card) for reading, publication, card in rows],
         page=page,
         page_size=page_size,
         total_items=total,
@@ -265,9 +289,11 @@ def list_readings_for_review(
     if suspicious_only:
         filters.append(ViewReading.risk_flags != [])
     total = db.scalar(select(func.count()).select_from(ViewReading).where(*filters)) or 0
-    items = list(
-        db.scalars(
-            select(ViewReading)
+    rows = list(
+        db.execute(
+            select(ViewReading, Publication, VideoCard)
+            .join(Publication, Publication.id == ViewReading.publication_id)
+            .join(VideoCard, VideoCard.id == Publication.video_card_id)
             .where(*filters)
             .order_by(ViewReading.captured_at, ViewReading.id)
             .offset((page - 1) * page_size)
@@ -275,7 +301,7 @@ def list_readings_for_review(
         )
     )
     return ViewReadingListResponse(
-        items=items,
+        items=[_reading_response(reading, publication, card) for reading, publication, card in rows],
         page=page,
         page_size=page_size,
         total_items=total,

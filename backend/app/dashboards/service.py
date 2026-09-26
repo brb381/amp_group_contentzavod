@@ -23,6 +23,7 @@ from app.content.models import (
     VideoCard,
 )
 from app.creators.models import CreatorProfile, ProfileHistory, ProfileStatus
+from app.creators.service import profile_response
 from app.dashboards.schemas import (
     AnalyticsBreakdownItem,
     AnalyticsMonthlyPoint,
@@ -39,14 +40,21 @@ from app.dashboards.schemas import (
     PlatformCount,
     QueueCounter,
     StaffAnalyticsResponse,
+    StaffBloggerAccount,
+    StaffBloggerCardResponse,
+    StaffBloggerPublication,
     StaffDashboardResponse,
     StaffOverview,
 )
+from app.errors import APIError
 from app.payouts.models import PayoutRequest, PayoutStatus, RecipientType
 from app.platforms import Platform
-from app.readings.models import ReadingStatus, ViewReading, YouTubeViewCollectionJob
+from app.readings.models import ReadingSource, ReadingStatus, ViewReading, YouTubeViewCollectionJob
 from app.readings.policy import MOSCOW, manual_submission_open, reporting_period
 from app.support.models import SupportStatus, SupportTicket
+from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
+from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
+from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -59,17 +67,25 @@ def _payable(value) -> int:
     return value.amount_kopecks + value.adjustment_kopecks
 
 
-def _accepted_readings(
+def _dashboard_readings(
     db: Session, publication_ids: set[uuid.UUID]
 ) -> dict[uuid.UUID, list[ViewReading]]:
+    """Return trusted readings plus pending automatic public counters for display."""
     if not publication_ids:
         return {}
     rows = db.scalars(
         select(ViewReading)
         .where(
             ViewReading.publication_id.in_(publication_ids),
-            ViewReading.status == ReadingStatus.ACCEPTED,
-            ViewReading.accepted_value.is_not(None),
+            (
+                (ViewReading.status == ReadingStatus.ACCEPTED)
+                | (
+                    (ViewReading.status == ReadingStatus.PENDING)
+                    & ViewReading.source.in_(
+                        (ReadingSource.TIKTOK_PUBLIC, ReadingSource.VK_PUBLIC, ReadingSource.RUTUBE_PUBLIC)
+                    )
+                )
+            ),
         )
         .order_by(
             ViewReading.publication_id,
@@ -84,15 +100,20 @@ def _accepted_readings(
     return grouped
 
 
+def _display_value(reading: ViewReading) -> int:
+    value = reading.accepted_value
+    return int(reading.reported_value if value is None else value)
+
+
 def _estimated_period_views(readings: list[ViewReading], period: date) -> int:
     before = [item for item in readings if item.reporting_period < period]
     current = [item for item in readings if item.reporting_period == period]
     if not current:
         return 0
-    previous_value = before[-1].accepted_value if before else None
+    previous_value = _display_value(before[-1]) if before else None
     if previous_value is None and len(current) > 1:
-        previous_value = current[0].accepted_value
-    current_value = current[-1].accepted_value
+        previous_value = _display_value(current[0])
+    current_value = _display_value(current[-1])
     return accrual_amount(previous_value, current_value, 1)[0]
 
 
@@ -104,10 +125,12 @@ def creator_dashboard(
     card_by_id = {card.id: card for card in cards}
     publications = list(
         db.scalars(
-            select(Publication).where(
+            select(Publication)
+            .where(
                 Publication.video_card_id.in_(card_by_id) if card_by_id else False,
                 Publication.deleted_at.is_(None),
             )
+            .order_by(Publication.updated_at.desc(), Publication.id.desc())
         )
     )
     active_publications = [
@@ -121,9 +144,9 @@ def creator_dashboard(
     for item in active_publications:
         platform_counts[item.platform.value] += 1
 
-    grouped_readings = _accepted_readings(db, {item.id for item in publications})
+    grouped_readings = _dashboard_readings(db, {item.id for item in publications})
     total_by_publication = {
-        publication_id: int(items[-1].accepted_value or 0)
+        publication_id: _display_value(items[-1])
         for publication_id, items in grouped_readings.items()
     }
     estimated_by_publication = {
@@ -193,17 +216,20 @@ def creator_dashboard(
     missing_manual = sum(
         1
         for item in active_publications
-        if item.platform != Platform.YOUTUBE and item.id not in has_current_reading
+        if item.platform not in {Platform.YOUTUBE, Platform.TIKTOK, Platform.VK}
+        and item.id not in has_current_reading
     )
 
     card_stats = defaultdict(
-        lambda: {"publications": 0, "total": 0, "current": 0}
+        lambda: {"publications": 0, "total": 0, "current": 0, "thumbnail": None}
     )
     for item in publications:
         stats = card_stats[item.video_card_id]
         stats["publications"] += 1
         stats["total"] += total_by_publication.get(item.id, 0)
         stats["current"] += period_views_by_publication.get(item.id, 0)
+        if stats["thumbnail"] is None and item.external_thumbnail_url:
+            stats["thumbnail"] = item.external_thumbnail_url
     ranking = [
         CreatorVideoRankingItem(
             video_card_id=card.id,
@@ -211,6 +237,7 @@ def creator_dashboard(
             publications=card_stats[card.id]["publications"],
             total_views=card_stats[card.id]["total"],
             current_period_new_views=card_stats[card.id]["current"],
+            thumbnail_url=card_stats[card.id]["thumbnail"],
         )
         for card in cards
     ]
@@ -278,6 +305,68 @@ def creator_dashboard(
             manual_submission_open=manual_submission_open(now),
         ),
         top_video_cards=ranking[:5],
+    )
+
+
+def staff_blogger_card(
+    db: Session, *, blogger_id: uuid.UUID, now: datetime
+) -> StaffBloggerCardResponse:
+    blogger = db.get(User, blogger_id)
+    if not blogger or blogger.role != Role.BLOGGER:
+        raise APIError(404, "BLOGGER_NOT_FOUND", "Blogger was not found")
+
+    profile = db.scalar(
+        select(CreatorProfile).where(CreatorProfile.user_id == blogger.id)
+    )
+    rows = list(
+        db.execute(
+            select(Publication, VideoCard)
+            .join(VideoCard, VideoCard.id == Publication.video_card_id)
+            .where(
+                VideoCard.blogger_id == blogger.id,
+                Publication.deleted_at.is_(None),
+            )
+            .order_by(Publication.updated_at.desc(), Publication.id)
+        )
+    )
+    readings = _dashboard_readings(db, {publication.id for publication, _ in rows})
+
+    publications = []
+    for publication, card in rows:
+        product_name = (
+            (card.product_snapshot or {}).get("publication_name")
+            or card.reported_product_name
+            or "Товар не указан"
+        )
+        accepted = readings.get(publication.id, [])
+        publications.append(
+            StaffBloggerPublication(
+                id=publication.id,
+                video_card_id=card.id,
+                card_title=card.title,
+                product_name=product_name,
+                platform=publication.platform.value,
+                status=publication.status.value,
+                availability=publication.availability.value,
+                enrichment_status=publication.enrichment_status.value,
+                url=publication.submitted_url,
+                thumbnail_url=publication.external_thumbnail_url,
+                current_views=_display_value(accepted[-1]) if accepted else 0,
+                updated_at=publication.updated_at,
+            )
+        )
+
+    return StaffBloggerCardResponse(
+        account=StaffBloggerAccount(
+            id=blogger.id,
+            email=blogger.email,
+            status=blogger.status.value,
+            email_verified_at=blogger.email_verified_at,
+            created_at=blogger.created_at,
+        ),
+        profile=profile_response(db, profile) if profile else None,
+        dashboard=creator_dashboard(db, actor=blogger, now=now),
+        publications=publications,
     )
 
 
@@ -353,6 +442,12 @@ def staff_dashboard(db: Session, *, now: datetime) -> StaffDashboardResponse:
         ("unavailable_publications", Publication, (Publication.availability == PublicationAvailability.UNAVAILABLE, Publication.deleted_at.is_(None)), "/staff/publications?availability=unavailable"),
         ("youtube_enrichment_errors", YouTubeEnrichmentJob, (YouTubeEnrichmentJob.state == "failed",), "/staff/integrations/youtube?type=enrichment&state=failed"),
         ("youtube_view_errors", YouTubeViewCollectionJob, (YouTubeViewCollectionJob.state == "failed",), "/staff/integrations/youtube?type=views&state=failed"),
+        ("tiktok_enrichment_errors", TikTokEnrichmentJob, (TikTokEnrichmentJob.state == "failed",), "/staff/integrations/tiktok?type=enrichment&state=failed"),
+        ("tiktok_view_errors", TikTokViewCollectionJob, (TikTokViewCollectionJob.state == "failed",), "/staff/integrations/tiktok?type=views&state=failed"),
+        ("vk_enrichment_errors", VKEnrichmentJob, (VKEnrichmentJob.state == "failed",), "/staff/integrations/vk?type=enrichment&state=failed"),
+        ("vk_view_errors", VKViewCollectionJob, (VKViewCollectionJob.state == "failed",), "/staff/integrations/vk?type=views&state=failed"),
+        ("rutube_enrichment_errors", RutubeEnrichmentJob, (RutubeEnrichmentJob.state == "failed",), "/staff/integrations/rutube?type=enrichment&state=failed"),
+        ("rutube_view_errors", RutubeViewCollectionJob, (RutubeViewCollectionJob.state == "failed",), "/staff/integrations/rutube?type=views&state=failed"),
     ]
     queues = [
         QueueCounter(
@@ -608,11 +703,27 @@ def staff_analytics(
             suspicious_accruals=sum(bool(row[0].risk_flags) for row in rows),
             failed_enrichment_jobs=_count(
                 db, YouTubeEnrichmentJob, YouTubeEnrichmentJob.state == "failed"
+            ) + _count(db, TikTokEnrichmentJob, TikTokEnrichmentJob.state == "failed") + _count(
+                db, VKEnrichmentJob, VKEnrichmentJob.state == "failed"
+            ) + _count(
+                db, RutubeEnrichmentJob, RutubeEnrichmentJob.state == "failed"
             ),
             failed_view_collection_jobs=_count(
                 db,
                 YouTubeViewCollectionJob,
                 YouTubeViewCollectionJob.state == "failed",
+            ) + _count(
+                db,
+                TikTokViewCollectionJob,
+                TikTokViewCollectionJob.state == "failed",
+            ) + _count(
+                db,
+                VKViewCollectionJob,
+                VKViewCollectionJob.state == "failed",
+            ) + _count(
+                db,
+                RutubeViewCollectionJob,
+                RutubeViewCollectionJob.state == "failed",
             ),
             unavailable_publications=_count(
                 db, Publication, *unavailable_filters

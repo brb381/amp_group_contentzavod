@@ -1,0 +1,216 @@
+from datetime import timedelta
+
+from sqlalchemy import select
+
+import app.billing.models  # noqa: F401 - registers calculation_periods FK target
+import app.creators.models  # noqa: F401 - registers social_accounts FK target
+
+from app.clock import utc_now
+from app.program.service import suspicious_growth_threshold
+from app.content.models import Publication, PublicationAvailability
+from app.contracts import RutubeViewCollectionCommand
+from app.integrations.models import ExternalProviderState
+from app.platforms import Platform
+from app.readings.models import ReadingSource, ReadingStatus, ViewReading, ViewReadingHistory
+from app.readings.policy import risk_flags
+from app.readings.revision import lock_reading_dataset_revision
+from app.rutube.client import RutubeClient, RutubeClientError
+from app.rutube.models import RutubeViewCollectionJob
+from app.rutube.schemas import RutubeVideo
+from app.rutube.service import MAX_TRANSIENT_ATTEMPTS, TRANSIENT_REASONS, _retry_after
+from app.rutube_config import RutubeWorkerSettings
+
+
+def _provider(db) -> ExternalProviderState:
+    provider = db.get(ExternalProviderState, "rutube")
+    if not provider:
+        provider = ExternalProviderState(provider="rutube")
+        db.add(provider)
+    return provider
+
+
+def _claim(command: RutubeViewCollectionCommand, session_factory) -> bool:
+    db = session_factory()
+    try:
+        job = db.scalar(
+            select(RutubeViewCollectionJob)
+            .where(
+                RutubeViewCollectionJob.id == command.job_id,
+                RutubeViewCollectionJob.publication_id == command.publication_id,
+                RutubeViewCollectionJob.dispatch_id == command.dispatch_id,
+                RutubeViewCollectionJob.state == "queued",
+            )
+            .with_for_update()
+        )
+        if not job:
+            db.rollback()
+            return False
+        job.state = "processing"
+        db.commit()
+        return True
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _record_error(
+    command: RutubeViewCollectionCommand,
+    error: RutubeClientError,
+    session_factory,
+) -> None:
+    db = session_factory()
+    try:
+        job = db.scalar(
+            select(RutubeViewCollectionJob)
+            .where(
+                RutubeViewCollectionJob.id == command.job_id,
+                RutubeViewCollectionJob.dispatch_id == command.dispatch_id,
+                RutubeViewCollectionJob.state == "processing",
+            )
+            .with_for_update()
+        )
+        if not job:
+            return
+        now = utc_now()
+        transient = (
+            error.status_code in {403, 429}
+            or (error.status_code is not None and error.status_code >= 500)
+            or error.reason in TRANSIENT_REASONS
+        )
+        retry_at = None
+        if transient:
+            fallback = now + timedelta(seconds=min(1800, 60 * (2 ** max(0, job.attempt_count - 1))))
+            retry_at = _retry_after(error.retry_after, now=now) or fallback
+            provider = _provider(db)
+            provider.status = "blocked"
+            provider.blocked_until = retry_at
+            provider.block_reason = error.reason
+        should_retry = transient and job.attempt_count < MAX_TRANSIENT_ATTEMPTS
+        job.state = "retry_wait" if should_retry else "failed"
+        job.available_at = retry_at or now
+        job.lease_until = None
+        job.dispatch_id = None
+        job.last_error_code = error.reason
+        publication = db.get(Publication, job.publication_id)
+        if publication and error.reason == "rutube_not_found":
+            publication.availability = PublicationAvailability.UNAVAILABLE
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def _apply_success(
+    command: RutubeViewCollectionCommand,
+    response: RutubeVideo,
+    settings: RutubeWorkerSettings,
+    session_factory,
+) -> None:
+    db = session_factory()
+    try:
+        job = db.scalar(
+            select(RutubeViewCollectionJob)
+            .where(
+                RutubeViewCollectionJob.id == command.job_id,
+                RutubeViewCollectionJob.dispatch_id == command.dispatch_id,
+                RutubeViewCollectionJob.state == "processing",
+            )
+            .with_for_update()
+        )
+        if not job:
+            return
+        publication = db.get(Publication, job.publication_id)
+        stale = (
+            not publication
+            or publication.platform != Platform.RUTUBE
+            or publication.submitted_url != command.source_url
+            or publication.external_id != command.external_id
+        )
+        if stale:
+            job.state = "failed"
+            job.last_error_code = "stale_command"
+        elif response.id != command.external_id:
+            job.state = "failed"
+            job.last_error_code = "rutube_video_id_mismatch"
+        else:
+            revision = lock_reading_dataset_revision(db)
+            period = job.collection_date.replace(day=1)
+            if revision.closed_through_period is not None and period <= revision.closed_through_period:
+                job.state = "failed"
+                job.last_error_code = "reading_period_financially_closed"
+            else:
+                key = f"rutube-public:{job.collection_date.isoformat()}"
+                reading = db.scalar(
+                    select(ViewReading).where(
+                        ViewReading.publication_id == publication.id,
+                        ViewReading.idempotency_key == key,
+                    )
+                )
+                if not reading:
+                    value = response.hits
+                    flags = risk_flags(
+                        db,
+                        publication_id=publication.id,
+                        period=period,
+                        value=value,
+                        suspicious_growth_threshold=suspicious_growth_threshold(db, settings.suspicious_monthly_view_growth),
+                    )
+                    flags = sorted(set([*flags, "approximate_public_counter"]))
+                    reading = ViewReading(
+                        publication_id=publication.id,
+                        reporting_period=period,
+                        source=ReadingSource.RUTUBE_PUBLIC,
+                        reported_value=value,
+                        accepted_value=None,
+                        status=ReadingStatus.PENDING,
+                        risk_flags=flags,
+                        idempotency_key=key,
+                        captured_at=utc_now(),
+                    )
+                    db.add(reading)
+                    db.flush()
+                    db.add(
+                        ViewReadingHistory(
+                            reading_id=reading.id,
+                            action="created",
+                            new_value=value,
+                            reason="Approximate public Rutube counter",
+                        )
+                    )
+                    revision.revision += 1
+                publication.availability = PublicationAvailability.AVAILABLE
+                job.state = "succeeded"
+                job.last_error_code = None
+                provider = _provider(db)
+                provider.status = "available"
+                provider.blocked_until = None
+                provider.block_reason = None
+        job.lease_until = None
+        job.dispatch_id = None
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
+def execute_rutube_view_collection(
+    command: RutubeViewCollectionCommand,
+    settings: RutubeWorkerSettings,
+    session_factory,
+    client: RutubeClient | None = None,
+) -> None:
+    if not _claim(command, session_factory):
+        return
+    client = client or RutubeClient(timeout_seconds=settings.rutube_request_timeout_seconds)
+    try:
+        response = client.fetch_video(command.external_id)
+    except RutubeClientError as error:
+        _record_error(command, error, session_factory)
+        return
+    _apply_success(command, response, settings, session_factory)
