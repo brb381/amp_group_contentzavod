@@ -389,10 +389,11 @@ export function loadAccountSettings(role: Role) {
     apiRequest<JsonObject>('/me/legal-status'),
     apiRequest<JsonObject>('/me/legal-acceptances?pageSize=50'),
     apiRequest<JsonObject>('/program-settings'),
+    getCurrentLegalDocuments(),
   ])
-  if (role !== 'blogger') return core.then(([legalStatus, acceptances, programSettings]) => ({ legalStatus, acceptances, programSettings }))
+  if (role !== 'blogger') return core.then(([legalStatus, acceptances, programSettings, legalDocuments]) => ({ legalStatus, acceptances, programSettings, legalDocuments }))
   return Promise.all([core, apiRequest<JsonObject>('/me/account-lifecycle'), apiRequest<JsonObject>('/me/account-deletion-requests?pageSize=20')])
-    .then(([[legalStatus, acceptances, programSettings], lifecycle, deletions]) => ({ legalStatus, acceptances, programSettings, lifecycle, deletions }))
+    .then(([[legalStatus, acceptances, programSettings, legalDocuments], lifecycle, deletions]) => ({ legalStatus, acceptances, programSettings, legalDocuments, lifecycle, deletions }))
 }
 
 export function saveProgramSettings(payload: JsonObject) {

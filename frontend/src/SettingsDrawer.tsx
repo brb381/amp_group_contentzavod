@@ -1,6 +1,6 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import {
-  Activity, AlertTriangle, Bell, CheckCircle2, FileCheck2, LayoutDashboard,
+  Activity, AlertTriangle, Bell, BookOpenText, CheckCircle2, FileCheck2, LayoutDashboard,
   LoaderCircle, LogOut, MailCheck, Save, ShieldAlert, UserRound, ArrowLeft, Building2, ExternalLink,
 } from 'lucide-react'
 import {
@@ -12,6 +12,7 @@ import { documentLabel, lifecycleActivityLabel, roleLabels, statusLabel } from '
 
 type Json = Record<string, any>
 type AccountSection = 'overview' | 'profile' | 'email' | 'documents' | 'program' | 'notifications' | 'activity' | 'account'
+type LegalDocumentType = 'program_terms' | 'personal_data_consent' | 'privacy_policy'
 
 
 function SectionButton({ active, icon, label, note, onClick }: {
@@ -29,6 +30,21 @@ function StatusLine({ complete, title, description }: { complete: boolean; title
   </div>
 }
 
+function LegalDocumentText({ content }: { content: string }) {
+  return <div className="legal-reader__content">
+    {content.split(/\r?\n/).map((line, index) => {
+      const text = line.trim()
+      if (!text) return <span className="legal-reader__space" key={index} aria-hidden="true" />
+      if (text.startsWith('### ')) return <h5 key={index}>{text.slice(4)}</h5>
+      if (text.startsWith('## ')) return <h4 key={index}>{text.slice(3)}</h4>
+      if (text.startsWith('# ')) return <h3 key={index}>{text.slice(2)}</h3>
+      if (/^[-*]\s/.test(text)) return <p className="legal-reader__list-item" key={index}>{text.slice(2)}</p>
+      if (/^\d+[.)]\s/.test(text)) return <p className="legal-reader__list-item legal-reader__list-item--numbered" key={index}>{text}</p>
+      return <p key={index}>{text}</p>
+    })}
+  </div>
+}
+
 export function SettingsDrawer({ user, close, changed, signedOut }: {
   user: CurrentUser; close: () => void; changed: (message: string) => void; signedOut: () => void;
 }) {
@@ -38,6 +54,7 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
   const [pending, setPending] = useState('')
   const [error, setError] = useState('')
   const [selectedTemplate, setSelectedTemplate] = useState('')
+  const [selectedDocumentType, setSelectedDocumentType] = useState<LegalDocumentType>('program_terms')
   const keys = useRef<Record<string, string>>({})
   const keyFor = (name: string) => keys.current[name] ??= crypto.randomUUID()
 
@@ -137,6 +154,10 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
 
   const requiredDocuments: Json[] = data?.legalStatus?.required_acceptances ?? []
   const acceptedDocuments: Json[] = data?.acceptances?.items ?? []
+  const legalDocuments: Json[] = Object.values(data?.legalDocuments ?? {})
+  const selectedDocument = legalDocuments.find((item: Json) => item.document_type === selectedDocumentType) ?? legalDocuments[0]
+  const selectedDocumentRequirement = requiredDocuments.find((item: Json) => item.document_id === selectedDocument?.id)
+  const selectedDocumentAcceptance = acceptedDocuments.find((item: Json) => item.document_id === selectedDocument?.id)
   const emailComplete = Boolean(user.email_verified_at)
   const documentsComplete = requiredDocuments.length === 0
   const completedSteps = Number(emailComplete) + Number(documentsComplete)
@@ -185,8 +206,27 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
 
           {section === 'documents' ? <>
             <div className="account-section-head"><span>Юридический статус</span><h3>Документы</h3><p>Актуальные согласия и условия участия хранятся вместе с датой принятия.</p></div>
-            {requiredDocuments.length ? <div className="legal-required"><h4>Требуют принятия</h4>{requiredDocuments.map((item: Json) => <div key={item.document_id}><span><b>{documentLabel(item.document_type)}</b><small>Версия {item.version}</small></span><button className="button button--secondary" onClick={() => void accept(item.document_id)} disabled={pending === item.document_id}>{pending === item.document_id ? <LoaderCircle className="spin" size={15} /> : null}Принять</button></div>)}</div> : <StatusLine complete title="Все документы приняты" description="Юридических ограничений для работы с системой нет." />}
-            {acceptedDocuments.length ? <div className="accepted-documents"><h4>История принятия</h4>{acceptedDocuments.map((item: Json, index: number) => <div key={item.id ?? index}><FileCheck2 size={16} /><span><b>{documentLabel(item.document_type)}</b><small>{item.accepted_at ? new Date(item.accepted_at).toLocaleString('ru-RU') : `Версия ${item.version ?? 'актуальная'}`}</small></span></div>)}</div> : null}
+            <div className="legal-library">
+              <div className="legal-library__list" role="tablist" aria-label="Актуальные документы">
+                {legalDocuments.map((item: Json) => {
+                  const accepted = acceptedDocuments.some((entry: Json) => entry.document_id === item.id)
+                  const required = requiredDocuments.some((entry: Json) => entry.document_id === item.id)
+                  return <button key={item.id} type="button" role="tab" aria-selected={selectedDocument?.id === item.id} className={selectedDocument?.id === item.id ? 'legal-library__item legal-library__item--active' : 'legal-library__item'} onClick={() => setSelectedDocumentType(item.document_type)}>
+                    <BookOpenText size={18} />
+                    <span><b>{item.title || documentLabel(item.document_type)}</b><small>Версия {item.version}</small></span>
+                    <em className={required ? 'legal-library__state legal-library__state--required' : 'legal-library__state'}>{required ? 'Нужно принять' : accepted ? 'Принят' : 'Для ознакомления'}</em>
+                  </button>
+                })}
+              </div>
+              {selectedDocument ? <article className="legal-reader" aria-labelledby="legal-document-title">
+                <header className="legal-reader__head">
+                  <div><small>{documentLabel(selectedDocument.document_type)} · версия {selectedDocument.version}</small><h4 id="legal-document-title">{selectedDocument.title}</h4><p>Опубликован {new Date(selectedDocument.published_at).toLocaleDateString('ru-RU')}</p></div>
+                  {selectedDocumentRequirement ? <button className="button button--primary" onClick={() => void accept(selectedDocument.id)} disabled={pending === selectedDocument.id}>{pending === selectedDocument.id ? <LoaderCircle className="spin" size={15} /> : <FileCheck2 size={15} />}Принять документ</button> : selectedDocumentAcceptance ? <span className="legal-reader__accepted"><CheckCircle2 size={15} />Принят {new Date(selectedDocumentAcceptance.accepted_at).toLocaleDateString('ru-RU')}</span> : null}
+                </header>
+                <LegalDocumentText content={selectedDocument.content_markdown} />
+              </article> : <div className="request-state request-state--empty">Актуальные документы пока не опубликованы.</div>}
+            </div>
+            {acceptedDocuments.length ? <details className="accepted-documents accepted-documents--history"><summary>История принятия</summary>{acceptedDocuments.map((item: Json, index: number) => <div key={item.id ?? index}><FileCheck2 size={16} /><span><b>{item.document_title || documentLabel(item.document_type)}</b><small>{item.accepted_at ? `${new Date(item.accepted_at).toLocaleString('ru-RU')} · версия ${item.document_version}` : `Версия ${item.document_version ?? 'актуальная'}`}</small></span></div>)}</details> : null}
           </> : null}
 
           {section === 'program' ? <>

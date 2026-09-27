@@ -121,7 +121,11 @@ try {
     await page.getByRole('button', { name: 'Личный кабинет' }).click()
     await page.getByRole('heading', { name: 'Личный кабинет' }).waitFor()
     await page.locator('.drawer-loading').waitFor({ state: 'hidden' })
-    console.log('E2E smoke passed: blogger profile, TikTok/VK content, readings, payouts, support and settings')
+    await page.locator('.account-nav button').filter({ hasText: 'Документы' }).click()
+    await page.locator('.legal-library__item').first().click()
+    await page.locator('.legal-reader__content').waitFor()
+    if (!(await page.locator('.legal-reader__content').innerText()).trim()) throw new Error('Legal document reader is empty')
+    console.log('E2E smoke passed: blogger profile, TikTok/VK content, readings, payouts, support and document reader')
   } else if (email.includes('moderator')) {
     await openNav()
     await page.getByRole('button', { name: 'Очереди' }).click()
