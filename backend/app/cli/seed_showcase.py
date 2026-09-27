@@ -6,10 +6,12 @@ from app.audit.service import AuditContext
 from app.auth.models import Role
 from app.auth.security import utc_now
 from app.billing.models import (
+    BalanceLedgerEntry,
     CalculationPeriod,
     CalculationPeriodStatus,
     CreatorBalance,
     CreatorPeriodTotal,
+    LedgerOperationType,
     PublicationAccrual,
     RateVersion,
 )
@@ -443,20 +445,23 @@ def seed_finance(db, blogger, users, seeded, now):
             risk_count=0,
         )
     )
+    payout_id = stable_uuid("showcase-payout-request")
+    payout_amount_kopecks = 75_000
     db.add(
         CreatorBalance(
             blogger_id=blogger.id,
             available_kopecks=184_500,
-            reserved_kopecks=75_000,
+            reserved_kopecks=payout_amount_kopecks,
             paid_kopecks=620_000,
         )
     )
     db.add(PayoutDetails(blogger_id=blogger.id, sbp_phone="+7 900 000-00-01", bank_name="Демо Банк"))
     db.add(
         PayoutRequest(
+            id=payout_id,
             request_number="AMP-SHOWCASE-0001",
             blogger_id=blogger.id,
-            amount_kopecks=75_000,
+            amount_kopecks=payout_amount_kopecks,
             status=PayoutStatus.REQUESTED,
             recipient_full_name="Мария Волкова (демо)",
             recipient_display_name="Мария | техника и lifestyle",
@@ -464,6 +469,18 @@ def seed_finance(db, blogger, users, seeded, now):
             sbp_phone="+7 900 000-00-01",
             bank_name="Демо Банк",
             manager_comment="Showcase-заявка: проверить реквизиты и статус самозанятого",
+        )
+    )
+    db.add(
+        BalanceLedgerEntry(
+            blogger_id=blogger.id,
+            operation_type=LedgerOperationType.PAYOUT_RESERVED,
+            available_delta_kopecks=-payout_amount_kopecks,
+            reserved_delta_kopecks=payout_amount_kopecks,
+            paid_delta_kopecks=0,
+            reference_type="payout_request",
+            reference_id=payout_id,
+            idempotency_key=f"payout-reserve:{payout_id}",
         )
     )
 
