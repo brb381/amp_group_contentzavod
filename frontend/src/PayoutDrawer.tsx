@@ -7,20 +7,10 @@ import {
   ApiError, PayoutCommand, PayoutMode, Role, createPayoutRequest,
   loadPayout, loadPayoutDetails, runPayoutCommand, savePayoutDetails,
 } from './api'
+import { payoutEventLabel, statusLabel } from './labels'
 
 type Json = Record<string, any>
 
-const statusLabels: Record<string, string> = {
-  requested: 'Запрошено', under_review: 'На проверке', approved: 'Одобрено',
-  paid: 'Оплачено', rejected: 'Отклонено', awaiting_receipt: 'Ожидается чек',
-  overdue: 'Просрочено', received: 'Получен', pending_payment: 'До оплаты',
-  not_applicable: 'Не требуется',
-}
-const eventLabels: Record<string, string> = {
-  requested: 'Заявка создана', review_started: 'Проверка начата',
-  approved: 'Выплата одобрена', rejected: 'Выплата отклонена',
-  paid: 'Оплата зафиксирована', receipt_received: 'Чек получен',
-}
 const commandLabels: Record<PayoutCommand, string> = {
   review: 'Взять в работу', approve: 'Одобрить', reject: 'Отклонить',
   payment: 'Зафиксировать оплату', receipt: 'Зафиксировать чек',
@@ -140,16 +130,16 @@ export function PayoutDrawer({ mode, payoutId, role, close, completed }: {
         </div></section> : null}
         {mode === 'request' ? <section className="payout-confirm"><span><CircleDollarSign size={22} /></span><h3>Создать заявку на выплату?</h3><p>Текущие реквизиты будут сохранены в заявке, а доступный подтверждённый баланс — зарезервирован для выплаты.</p><div><ShieldCheck size={16} />Заявка будет создана один раз</div></section> : null}
         {mode === 'details' && data ? <>
-          <section className="payout-summary"><div><span>Сумма</span><strong>{rubles(data.amount_kopecks)}</strong></div><span className={`payout-status payout-status--${data.status}`}>{statusLabels[data.status] ?? data.status}</span></section>
+          <section className="payout-summary"><div><span>Сумма</span><strong>{rubles(data.amount_kopecks)}</strong></div><span className={`payout-status payout-status--${data.status}`}>{statusLabel(data.status)}</span></section>
           <section className="form-section"><h3><CreditCard size={16} />Получатель</h3><div className="payout-details-grid">
             <Detail label="Получатель" value={data.recipient_display_name || data.recipient_full_name} />
             <Detail label="Тип" value={data.recipient_type === 'self_employed' ? 'Самозанятый' : 'Физлицо'} />
             <Detail label="Телефон СБП" value={data.sbp_phone} /><Detail label="Банк" value={data.bank_name || 'Не указан'} />
             <Detail label="Запрошено" value={showDate(data.requested_at)} /><Detail label="Срок оплаты" value={showDate(data.payment_due_date)} />
             {data.paid_on ? <Detail label="Оплачено" value={showDate(data.paid_on)} /> : null}
-            {data.receipt_status ? <Detail label="Чек" value={statusLabels[data.receipt_status] ?? data.receipt_status} /> : null}
+            {data.receipt_status ? <Detail label="Чек" value={statusLabel(data.receipt_status)} /> : null}
           </div>{data.rejection_reason ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Причина отклонения</b>{data.rejection_reason}</span></div> : null}</section>
-          {Array.isArray(data.history) ? <section className="form-section"><h3><Clock3 size={16} />История</h3><div className="payout-history">{data.history.map((item: Json) => <div key={item.id}><span><CheckCircle2 size={15} /></span><div><strong>{eventLabels[item.action] ?? item.action}</strong><small>{showDate(item.created_at)}{item.comment ? ' · ' + item.comment : ''}</small></div></div>)}</div></section> : null}
+          {Array.isArray(data.history) ? <section className="form-section"><h3><Clock3 size={16} />История</h3><div className="payout-history">{data.history.map((item: Json) => <div key={item.id}><span><CheckCircle2 size={15} /></span><div><strong>{payoutEventLabel(item.action)}</strong><small>{showDate(item.created_at)}{item.comment ? ' · ' + item.comment : ''}</small></div></div>)}</div></section> : null}
           {commands.length ? <section className="form-section"><h3><FileCheck2 size={16} />Действия</h3><div className="payout-actions">{commands.map((item) => <button key={item} type="button" className={command === item ? 'active' : ''} onClick={() => setCommand(item)}>{item === 'reject' ? <AlertTriangle size={16} /> : item === 'payment' ? <CircleDollarSign size={16} /> : item === 'receipt' ? <ReceiptText size={16} /> : <FileCheck2 size={16} />}{commandLabels[item]}</button>)}</div>
             {command ? <div className="payout-command-form">
               {['review', 'approve'].includes(command) ? <Field label="Комментарий" wide><textarea name="comment" rows={3} /></Field> : null}

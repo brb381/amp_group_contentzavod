@@ -26,7 +26,12 @@ import { EntityDrawer } from './EntityDrawer'
 import { BloggerDrawer } from './BloggerDrawer'
 import { AnalyticsPage } from './AnalyticsPage'
 import { EarningsDrawer } from './EarningsDrawer'
-import { availabilityLabels, enrichmentLabels, platformConfig, platformIds, readingSourceLabels, riskFlagLabels, visibleRiskFlags } from './platforms'
+import { availabilityLabel, enrichmentLabel, platformConfig, platformIds, readingSourceLabel, visibleRiskFlags } from './platforms'
+import {
+  documentLabel, exportFormatLabel, exportTypeLabel, integrationErrorLabel, recipientLabel, riskFlagLabel,
+  roleLabel, roleLabels, securityActionLabel, securityResultLabel, statusLabel, statusLabels,
+  supportCategoryLabel,
+} from './labels'
 
 type Tone = 'red' | 'amber' | 'green' | 'blue' | 'gray'
 type Json = Record<string, any>
@@ -36,10 +41,6 @@ type Row = {
 }
 type NavItem = { id: PageId; label: string; icon: typeof LayoutDashboard }
 
-const roleLabels: Record<Role, string> = {
-  blogger: 'Блогер', moderator: 'Модератор', manager: 'Менеджер',
-  finance: 'Финансы', analyst: 'Аналитик', admin: 'Администратор',
-}
 const rolePages: Record<Role, PageId[]> = {
   blogger: ['overview', 'catalog', 'publications', 'readings', 'finance', 'support'],
   moderator: ['overview', 'moderation', 'creators', 'catalog', 'publications', 'readings', 'billing', 'exports', 'support'],
@@ -73,25 +74,13 @@ const pageMeta: Record<PageId, [string, string]> = {
   publications: ['Публикации', 'Контент и карточки роликов по площадкам'],
   readings: ['Показания', 'Значения просмотров и подозрительные изменения'],
   finance: ['Выплаты', 'Запросы, реквизиты и фиксация оплаты'],
-  exports: ['Выгрузки', 'Асинхронные отчёты и платёжные реестры'],
+  exports: ['Выгрузки', 'Отчёты и платёжные реестры'],
   support: ['Обращения', 'Диалоги, вопросы и запросы восстановления'],
   analytics: ['Аналитика', 'Контент, аудитория и выплаты по программе'],
   catalog: ['Каталог', 'Товары и обязательные требования к публикациям'],
   billing: ['Расчёты', 'Периоды, начисления и подтверждение результатов'],
   security: ['Безопасность', 'Неизменяемый журнал действий и отказов'],
   legal: ['Документы', 'Версии юридических документов программы'],
-}
-const statusLabels: Record<string, string> = {
-  active: 'Активен', approved: 'Одобрено', blocked: 'Заблокирован',
-  changes_required: 'Нужны изменения', closed: 'Закрыто', completed: 'Готово',
-  draft: 'Черновик', email_pending: 'Ждёт email', failed: 'Ошибка',
-  in_progress: 'В работе', new: 'Новое', open: 'Открыто', paid: 'Оплачено',
-  partially_approved: 'Частично одобрено', pending: 'На проверке',
-  pending_review: 'На модерации', processing: 'Формируется', ready: 'Готово',
-  rejected: 'Отклонено', resolved: 'Решено', suspended: 'Приостановлен',
-  requested: 'Запрошено', submitted: 'Отправлено', under_review: 'На проверке', waiting_blogger: 'Ждём блогера',
-  preliminary: 'Предварительно', confirmed: 'Подтверждено',
-  accepted: 'Принято', corrected: 'Исправлено',
 }
 const queueLabels: Record<string, string> = {
   new_profiles: 'Новые заявки блогеров', profiles_re_review: 'Профили после исправлений',
@@ -113,7 +102,7 @@ const numeric = (value?: number) => new Intl.NumberFormat('ru-RU', {
 const date = (value: unknown) => {
   if (!value || typeof value !== 'string') return '—'
   const parsed = new Date(value)
-  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat('ru-RU', {
+  return Number.isNaN(parsed.getTime()) ? '—' : new Intl.DateTimeFormat('ru-RU', {
     day: '2-digit', month: '2-digit', year: 'numeric',
   }).format(parsed)
 }
@@ -144,7 +133,7 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
   if (page === 'moderation') {
     const profileRows = ((data.profiles as Json)?.items ?? []).map((item: Json) => row({
       id: 'profile-' + item.id, rawId: item.id, title: item.display_name || item.full_name || 'Профиль без имени',
-      meta: item.city_country || 'Заявка блогера', status: statusLabels[item.status] ?? item.status,
+      meta: item.city_country || 'Заявка блогера', status: statusLabel(item.status),
       rawStatus: item.status, tone: tone(item.status), date: date(item.updated_at), value: 'Профиль', payload: item,
     }))
     const publicationRows = ((data.publications as Json)?.items ?? []).map((item: Json) => {
@@ -153,7 +142,7 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
       return row({ id: 'publication-' + publication.id, rawId: publication.id,
         title: item.card_title || publication.external_title || 'Публикация',
         meta: creator + ' · ' + platformConfig(publication.platform).label,
-        status: statusLabels[publication.status] ?? publication.status, rawStatus: publication.status,
+        status: statusLabel(publication.status), rawStatus: publication.status,
         tone: tone(publication.status), date: date(publication.updated_at), value: 'Публикация',
         initials: initials(creator), payload: item,
       })
@@ -162,30 +151,30 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
       const account = item.account ?? {}
       const creator = item.creator_display_name || item.creator_full_name || 'Блогер'
       const platform = platformConfig(account.platform)
-      return row({ id: 'social-' + account.id, rawId: account.id, title: creator, meta: platform.label + ' · ' + account.url, status: statusLabels[account.status] ?? account.status, rawStatus: account.status, tone: tone(account.status), date: date(account.updated_at), value: numeric(account.follower_count) + ' подписчиков', initials: platform.shortLabel, payload: item })
+      return row({ id: 'social-' + account.id, rawId: account.id, title: creator, meta: platform.label + ' · ' + account.url, status: statusLabel(account.status), rawStatus: account.status, tone: tone(account.status), date: date(account.updated_at), value: numeric(account.follower_count) + ' подписчиков', initials: platform.shortLabel, payload: item })
     })
     return [...profileRows, ...publicationRows, ...socialRows]
   }
   if (page === 'finance' && role === 'blogger' && data.balance) {
     const balance = data.balance as Json
     const balanceRow = row({ id: 'balance', title: 'Доступный баланс', meta: `${rubles(balance.reserved_kopecks)} зарезервировано · ${rubles(balance.paid_kopecks)} выплачено`, status: balance.claim_expired_at ? 'Срок запроса истёк' : 'Доступен', rawStatus: balance.claim_expired_at ? 'expired' : 'active', tone: balance.claim_expired_at ? 'red' : 'green', date: date(balance.updated_at), value: rubles(balance.available_kopecks), initials: '₽', payload: { ...balance, __kind: 'balance' } })
-    const earningRows = ((data.earnings as Json)?.items ?? []).map((item: Json) => row({ id: `earning-${item.period.id}`, rawId: item.period.period, title: `Начисления за ${date(item.period.period)}`, meta: `${numeric(item.total.eligible_views)} просмотров · ${item.total.publication_count} публикаций`, status: statusLabels[item.period.status] ?? item.period.status, rawStatus: item.period.status, tone: tone(item.period.status), date: date(item.period.confirmed_at || item.period.updated_at), value: rubles(item.total.payable_amount_kopecks), initials: 'Н', payload: { ...item, __kind: 'earning' } }))
-    const payoutRows = ((data.payouts as Json)?.items ?? []).map((item: Json) => row({ id: item.request_number || item.id, rawId: item.id, title: item.request_number || 'Запрос выплаты', meta: (item.recipient_type ?? 'получатель') + ' · запрос выплаты', status: statusLabels[item.status] ?? item.status, rawStatus: item.status, tone: tone(item.status, Boolean(item.is_payment_overdue)), date: date(item.updated_at || item.requested_at), value: rubles(item.amount_kopecks), initials: 'В', payload: { ...item, __kind: 'payout' } }))
+    const earningRows = ((data.earnings as Json)?.items ?? []).map((item: Json) => row({ id: `earning-${item.period.id}`, rawId: item.period.period, title: `Начисления за ${date(item.period.period)}`, meta: `${numeric(item.total.eligible_views)} просмотров · ${item.total.publication_count} публикаций`, status: statusLabel(item.period.status), rawStatus: item.period.status, tone: tone(item.period.status), date: date(item.period.confirmed_at || item.period.updated_at), value: rubles(item.total.payable_amount_kopecks), initials: 'Н', payload: { ...item, __kind: 'earning' } }))
+    const payoutRows = ((data.payouts as Json)?.items ?? []).map((item: Json) => row({ id: item.request_number || item.id, rawId: item.id, title: item.request_number || 'Запрос выплаты', meta: recipientLabel(item.recipient_type) + ' · запрос выплаты', status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status, Boolean(item.is_payment_overdue)), date: date(item.updated_at || item.requested_at), value: rubles(item.amount_kopecks), initials: 'В', payload: { ...item, __kind: 'payout' } }))
     return [balanceRow, ...earningRows, ...payoutRows]
   }
   const items: Json[] = Array.isArray(data.items) ? data.items : []
   if (page === 'creators') return items.map((item) => {
     const name = item.display_name || item.full_name || item.email || 'Блогер'
     return row({ id: item.id, rawId: item.id, title: name,
-      meta: role === 'admin' ? item.email + ' · ' + (roleLabels[item.role as Role] ?? item.role) : item.city_country || item.content_topics || 'Профиль',
-      status: statusLabels[item.status] ?? item.status, rawStatus: item.status, tone: tone(item.status),
-      date: date(item.updated_at || item.created_at), value: role === 'admin' ? roleLabels[item.role as Role] ?? item.role : 'Профиль', payload: item,
+      meta: role === 'admin' ? item.email + ' · ' + roleLabel(item.role) : item.city_country || item.content_topics || 'Профиль',
+      status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status),
+      date: date(item.updated_at || item.created_at), value: role === 'admin' ? roleLabel(item.role) : 'Профиль', payload: item,
     })
   })
   if (page === 'publications') return items.map((item) => {
     if (role === 'blogger') return row({ id: item.id, rawId: item.id, title: item.title,
       meta: item.product_snapshot?.publication_name || item.reported_product?.name || 'Карточка ролика',
-      status: statusLabels[item.status] ?? item.status, rawStatus: item.status, tone: tone(item.status),
+      status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status),
       date: date(item.updated_at), value: (item.publication_summary?.total ?? 0) + ' публикаций', payload: item, thumbnailUrl: item.thumbnail_url ?? '',
     })
     const publication = item.publication ?? {}
@@ -193,9 +182,9 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
     return row({ id: publication.id, rawId: publication.id,
       title: item.card_title || publication.external_title || 'Публикация',
       meta: creator + ' · ' + platformConfig(publication.platform).label,
-      status: statusLabels[publication.status] ?? publication.status, rawStatus: publication.status,
+      status: statusLabel(publication.status), rawStatus: publication.status,
       tone: tone(publication.status), date: date(publication.updated_at),
-      value: publication.external_author_name || publication.platform || '—', initials: initials(creator), payload: item, thumbnailUrl: publication.external_thumbnail_url ?? '',
+      value: publication.external_author_name || platformConfig(publication.platform).label, initials: initials(creator), payload: item, thumbnailUrl: publication.external_thumbnail_url ?? '',
     })
   })
   if (page === 'readings') return items.map((item) => {
@@ -203,8 +192,8 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
     return row({
       id: item.id, rawId: item.id,
       title: item.publication_title || numeric(item.reported_value) + ' просмотров',
-      meta: platform.label + ' · ' + (readingSourceLabels[item.source] ?? item.source ?? readingSourceLabels.manual) + ' · период ' + date(item.reporting_period),
-      status: statusLabels[item.status] ?? item.status, rawStatus: item.status,
+      meta: platform.label + ' · ' + (readingSourceLabel(item.source)) + ' · период ' + date(item.reporting_period),
+      status: statusLabel(item.status), rawStatus: item.status,
       tone: tone(item.status, visibleRiskFlags(item.risk_flags).length > 0), date: date(item.updated_at || item.captured_at),
       value: numeric(item.accepted_value ?? item.reported_value) + ' просмотров',
       initials: platform.shortLabel, thumbnailUrl: item.thumbnail_url ?? '', payload: item,
@@ -213,30 +202,30 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
   if (page === 'finance') return items.map((item) => {
     const name = item.recipient_display_name || item.recipient_full_name || item.request_number
     return row({ id: item.request_number || item.id, rawId: item.id, title: name,
-      meta: (item.recipient_type ?? 'получатель') + ' · ' + item.request_number,
-      status: statusLabels[item.status] ?? item.status, rawStatus: item.status,
+      meta: recipientLabel(item.recipient_type) + ' · ' + item.request_number,
+      status: statusLabel(item.status), rawStatus: item.status,
       tone: tone(item.status, Boolean(item.is_payment_overdue)), date: date(item.updated_at || item.requested_at),
       value: rubles(item.amount_kopecks),
     })
   })
   if (page === 'exports') return items.map((item) => row({
-    id: item.id, rawId: item.id, title: String(item.export_type ?? 'Выгрузка').replaceAll('_', ' '),
-    meta: String(item.format ?? '').toUpperCase() + ' · схема ' + (item.schema_version ?? 1),
-    status: statusLabels[item.status] ?? item.status, rawStatus: item.status, tone: tone(item.status),
+    id: item.id, rawId: item.id, title: exportTypeLabel(item.export_type),
+    meta: exportFormatLabel(item.format),
+    status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status),
     date: date(item.completed_at || item.created_at), value: item.row_count == null ? '—' : numeric(item.row_count) + ' строк',
-    initials: String(item.format ?? 'XLS').slice(0, 3).toUpperCase(),
+    initials: item.format === 'csv' ? 'CSV' : 'XLS',
   }))
   if (page === 'support') return items.map((item) => row({
     id: item.ticket_number || item.id, rawId: item.id, title: item.subject,
-    meta: String(item.category ?? 'Обращение').replaceAll('_', ' '),
-    status: statusLabels[item.status] ?? item.status, rawStatus: item.status, tone: tone(item.status),
+    meta: supportCategoryLabel(item.category),
+    status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status),
     date: date(item.updated_at || item.last_message_at),
     value: item.assigned_to_user_id ? 'Назначено' : 'Без исполнителя', initials: 'ТП',
   }))
   if (page === 'catalog') return items.map((item) => row({ id: item.id, rawId: item.id, title: item.publication_name, meta: item.brand + ' · ' + item.sku, status: item.is_active ? 'Активен' : 'Архив', rawStatus: item.is_active ? 'active' : 'inactive', tone: item.is_active ? 'green' : 'gray', date: date(item.updated_at), value: item.required_hashtags?.length + ' хэштегов', initials: String(item.brand).slice(0, 2).toUpperCase() }))
-  if (page === 'billing') return items.map((item) => row({ id: item.id, rawId: item.id, title: 'Период ' + date(item.period), meta: numeric(item.total_views) + ' просмотров', status: statusLabels[item.status] ?? item.status, rawStatus: item.status, tone: tone(item.status), date: date(item.updated_at), value: rubles(item.total_payable_kopecks), initials: '₽' }))
-  if (page === 'security') return items.map((item) => row({ id: item.id, rawId: item.id, title: item.action, meta: (item.actor_role || 'system') + ' · ' + item.request_id, status: item.result, rawStatus: item.result, tone: item.result === 'success' ? 'green' : 'red', date: date(item.occurred_at), value: item.object_type || '—', initials: item.result === 'success' ? 'OK' : '!' }))
-  if (page === 'legal') return items.map((item) => row({ id: item.id, rawId: item.id, title: item.title, meta: item.document_type + ' · ' + item.version, status: item.is_current ? 'Действует' : 'Архив', rawStatus: item.is_current ? 'active' : 'archived', tone: item.is_current ? 'green' : 'gray', date: date(item.published_at), value: 'Редакция ' + item.revision, initials: 'Д' }))
+  if (page === 'billing') return items.map((item) => row({ id: item.id, rawId: item.id, title: 'Период ' + date(item.period), meta: numeric(item.total_views) + ' просмотров', status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status), date: date(item.updated_at), value: rubles(item.total_payable_kopecks), initials: '₽' }))
+  if (page === 'security') return items.map((item) => row({ id: item.id, rawId: item.id, title: securityActionLabel(item.action), meta: roleLabel(item.actor_role), status: securityResultLabel(item.result), rawStatus: item.result, tone: item.result === 'success' ? 'green' : 'red', date: date(item.occurred_at), value: 'Событие', initials: item.result === 'success' ? 'OK' : '!' }))
+  if (page === 'legal') return items.map((item) => row({ id: item.id, rawId: item.id, title: item.title, meta: documentLabel(item.document_type) + ' · версия ' + item.version, status: item.is_current ? 'Действует' : 'Архив', rawStatus: item.is_current ? 'active' : 'archived', tone: item.is_current ? 'green' : 'gray', date: date(item.published_at), value: 'Редакция ' + item.revision, initials: 'Д' }))
   return []
 }
 
@@ -248,7 +237,7 @@ function dashboardRows(payload: PagePayload | null, role: Role): Row[] {
     value: numeric(item.total_views) + ' просмотров', thumbnailUrl: item.thumbnail_url ?? '',
   }))
   return (data.queues ?? []).filter((item: Json) => item.count > 0).map((item: Json) => row({
-    id: item.code, title: queueLabels[item.code] ?? String(item.code).replaceAll('_', ' '),
+    id: item.code, title: queueLabels[item.code] ?? 'Задачи требуют внимания',
     meta: 'Операционная очередь', status: item.count >= 5 ? 'Приоритет' : 'В работе',
     rawStatus: 'pending', tone: item.count >= 5 ? 'red' : 'amber',
     date: 'Сейчас', value: item.count + ' задач', initials: String(item.count),
@@ -510,10 +499,10 @@ function WorkDrawer({ state, role, close, completed }: {
       {loading ? <div className="drawer-loading"><LoaderCircle className="spin" size={20} />Загружаем данные</div> :
       <form className="work-form" onSubmit={submit}>
         {state.item ? <div className="drawer-entity"><Avatar value={state.item.initials} /><span><strong>{state.item.title}</strong><small>{state.item.meta}</small></span><Badge value={state.item.status} color={state.item.tone} /></div> : null}
-        {state.kind === 'moderate-profile' ? <section className="form-section"><h3>Данные профиля</h3><div className="export-details"><span><small>ФИО</small>{itemData.full_name || '—'}</span><span><small>Публичное имя</small>{itemData.display_name || '—'}</span><span><small>Телефон</small>{itemData.phone || '—'}</span><span><small>Telegram</small>{itemData.telegram || '—'}</span><span><small>Город и страна</small>{itemData.city_country || '—'}</span><span><small>Получатель</small>{itemData.recipient_status || '—'}</span></div>{itemData.content_topics ? <p className="entity-copy">{itemData.content_topics}</p> : null}</section> : null}
-        {state.kind === 'moderate-social' ? <section className="form-section"><h3>Социальный аккаунт</h3><div className="export-details"><span><small>Площадка</small>{platformConfig(itemData.account?.platform).label}</span><span><small>Подписчики</small>{numeric(itemData.account?.follower_count)}</span><span><small>Блогер</small>{itemData.creator_display_name || itemData.creator_full_name || '—'}</span><span><small>Текущий статус</small>{statusLabels[itemData.account?.status] ?? itemData.account?.status ?? '—'}</span></div>{itemData.account?.url ? <a className="entity-link" href={itemData.account.url} target="_blank" rel="noreferrer"><Link2 size={15} />Открыть площадку</a> : null}</section> : null}
-        {state.kind === 'moderate-publication' ? <section className="form-section"><h3>Материал</h3><div className="export-details"><span><small>Площадка</small>{platformConfig(publicationData.platform).label}</span><span><small>Автор на площадке</small>{publicationData.external_author_name || '—'}</span><span><small>Заголовок</small>{publicationData.external_title || itemData.card_title || '—'}</span><span><small>Доступность</small>{availabilityLabels[publicationData.availability] ?? publicationData.availability ?? '—'}</span><span><small>Получение данных</small>{enrichmentLabels[publicationData.enrichment_status] ?? publicationData.enrichment_status ?? '—'}</span><span><small>Просмотры</small>{platformConfig(publicationData.platform).automaticReadings ? 'Автоматически' : 'Вручную'}</span></div>{publicationData.enrichment_error_code ? <div className="integration-error"><AlertTriangle size={16} /><span><b>Не удалось получить данные</b>{publicationData.enrichment_error_code}</span></div> : null}{publicationData.submitted_url ? <a className="entity-link" href={publicationData.submitted_url} target="_blank" rel="noreferrer"><Link2 size={15} />Открыть публикацию</a> : null}</section> : null}
-        {['moderate-reading', 'correct-reading'].includes(state.kind) ? <section className="form-section"><h3>Данные показания</h3><div className="export-details"><span><small>Заявлено</small>{numeric(itemData.reported_value)}</span><span><small>Принято</small>{itemData.accepted_value == null ? '—' : numeric(itemData.accepted_value)}</span><span><small>Источник</small>{readingSourceLabels[itemData.source] ?? itemData.source ?? readingSourceLabels.manual}</span><span><small>Период</small>{date(itemData.reporting_period)}</span></div>{visibleRiskFlags(itemData.risk_flags).length ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Особенности данных</b>{visibleRiskFlags(itemData.risk_flags).map((flag: string) => riskFlagLabels[flag] ?? flag).join(', ')}</span></div> : null}</section> : null}
+        {state.kind === 'moderate-profile' ? <section className="form-section"><h3>Данные профиля</h3><div className="export-details"><span><small>ФИО</small>{itemData.full_name || '—'}</span><span><small>Публичное имя</small>{itemData.display_name || '—'}</span><span><small>Телефон</small>{itemData.phone || '—'}</span><span><small>Telegram</small>{itemData.telegram || '—'}</span><span><small>Город и страна</small>{itemData.city_country || '—'}</span><span><small>Получатель</small>{recipientLabel(itemData.recipient_status)}</span></div>{itemData.content_topics ? <p className="entity-copy">{itemData.content_topics}</p> : null}</section> : null}
+        {state.kind === 'moderate-social' ? <section className="form-section"><h3>Социальный аккаунт</h3><div className="export-details"><span><small>Площадка</small>{platformConfig(itemData.account?.platform).label}</span><span><small>Подписчики</small>{numeric(itemData.account?.follower_count)}</span><span><small>Блогер</small>{itemData.creator_display_name || itemData.creator_full_name || '—'}</span><span><small>Текущий статус</small>{statusLabel(itemData.account?.status, '—')}</span></div>{itemData.account?.url ? <a className="entity-link" href={itemData.account.url} target="_blank" rel="noreferrer"><Link2 size={15} />Открыть площадку</a> : null}</section> : null}
+        {state.kind === 'moderate-publication' ? <section className="form-section"><h3>Материал</h3><div className="export-details"><span><small>Площадка</small>{platformConfig(publicationData.platform).label}</span><span><small>Автор на площадке</small>{publicationData.external_author_name || '—'}</span><span><small>Заголовок</small>{publicationData.external_title || itemData.card_title || '—'}</span><span><small>Доступность</small>{availabilityLabel(publicationData.availability)}</span><span><small>Получение данных</small>{enrichmentLabel(publicationData.enrichment_status)}</span><span><small>Просмотры</small>{platformConfig(publicationData.platform).automaticReadings ? 'Автоматически' : 'Вручную'}</span></div>{publicationData.enrichment_error_code ? <div className="integration-error"><AlertTriangle size={16} /><span><b>Не удалось получить данные</b>{integrationErrorLabel(publicationData.enrichment_error_code)}</span></div> : null}{publicationData.submitted_url ? <a className="entity-link" href={publicationData.submitted_url} target="_blank" rel="noreferrer"><Link2 size={15} />Открыть публикацию</a> : null}</section> : null}
+        {['moderate-reading', 'correct-reading'].includes(state.kind) ? <section className="form-section"><h3>Данные показания</h3><div className="export-details"><span><small>Заявлено</small>{numeric(itemData.reported_value)}</span><span><small>Принято</small>{itemData.accepted_value == null ? '—' : numeric(itemData.accepted_value)}</span><span><small>Источник</small>{readingSourceLabel(itemData.source)}</span><span><small>Период</small>{date(itemData.reporting_period)}</span></div>{visibleRiskFlags(itemData.risk_flags).length ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Требуется проверка</b>{visibleRiskFlags(itemData.risk_flags).map(riskFlagLabel).join(', ')}</span></div> : null}</section> : null}
         {state.kind === 'content' ? <>
           <section className="form-section"><h3>Карточка ролика</h3><div className="form-grid">
             <Field label="Название" wide><input name="title" required maxLength={255} /></Field>

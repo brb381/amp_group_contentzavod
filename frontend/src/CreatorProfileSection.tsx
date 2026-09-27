@@ -5,14 +5,9 @@ import {
   saveCreatorProfile, submitCreatorProfile, updateSocialAccount, uploadProfileAvatar,
 } from './api'
 import { platformConfig, platformIds, platforms, type PlatformId } from './platforms'
+import { statusLabel } from './labels'
 
 type Json = Record<string, any>
-
-const statusLabels: Record<string, string> = {
-  draft: 'Черновик', submitted: 'На модерации', in_review: 'Проверяется',
-  approved: 'Одобрено', rejected: 'Отклонено', suspended: 'Приостановлено',
-  pending: 'На проверке', pending_review: 'На проверке', blocked: 'Заблокировано',
-}
 
 export function CreatorProfileSection({ changed }: { changed: (message: string) => void }) {
   const [workspace, setWorkspace] = useState<Json | null>(null)
@@ -139,7 +134,7 @@ export function CreatorProfileSection({ changed }: { changed: (message: string) 
     </section>
 
     <form className="profile-settings-block" onSubmit={saveProfile} key={profile.updated_at ?? 'profile'}>
-      <header className="profile-settings-head"><div><h4>Основные данные</h4><p>Статус профиля: {statusLabels[profile.status] ?? profile.status ?? 'Черновик'}</p></div></header>
+      <header className="profile-settings-head"><div><h4>Основные данные</h4><p>Статус профиля: {statusLabel(profile.status, 'Черновик')}</p></div></header>
       {!profileEditable ? <div className="inline-note">Одобренный профиль доступен только для чтения. Площадки можно добавлять отдельно.</div> : null}
       <fieldset className="form-grid" disabled={!profileEditable || pending === 'profile'}>
         <label className="form-field"><span>ФИО</span><input name="full_name" defaultValue={profile.full_name ?? ''} required /></label>
@@ -164,7 +159,7 @@ export function CreatorProfileSection({ changed }: { changed: (message: string) 
         </div>
         <div className="creator-profile-actions"><button className="button button--secondary" disabled={pending === 'social'}>{pending === 'social' ? <LoaderCircle className="spin" size={16} /> : editingAccount ? <Save size={16} /> : <Link2 size={16} />}{editingAccount ? 'Сохранить площадку' : 'Добавить площадку'}</button>{editingAccount ? <button type="button" className="text-button" onClick={() => { setEditingAccount(null); setAccountPlatform('vk') }}>Отменить</button> : null}</div>
       </form>
-      {accounts.length ? <div className="creator-social-list">{accounts.map((item) => <article key={item.id}><span className="creator-social-mark">{platformConfig(item.platform).shortLabel}</span><div><strong>{platformConfig(item.platform).label}</strong><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></div><b className={`creator-social-status creator-social-status--${item.status}`}>{statusLabels[item.status] ?? item.status}</b><div className="creator-social-actions"><button type="button" onClick={() => { setEditingAccount(item); setAccountPlatform(item.platform as PlatformId) }} title="Изменить площадку"><Pencil size={15} /></button><button type="button" onClick={() => void removeSocialAccount(item)} disabled={pending === `delete:${item.id}`} title="Удалить площадку">{pending === `delete:${item.id}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}</button></div></article>)}</div> : <div className="inline-note">Площадки пока не добавлены.</div>}
+      {accounts.length ? <div className="creator-social-list">{accounts.map((item) => <article key={item.id}><span className="creator-social-mark">{platformConfig(item.platform).shortLabel}</span><div><strong>{platformConfig(item.platform).label}</strong><a href={item.url} target="_blank" rel="noreferrer">{item.url}</a></div><b className={`creator-social-status creator-social-status--${item.status}`}>{statusLabel(item.status)}</b><div className="creator-social-actions"><button type="button" onClick={() => { setEditingAccount(item); setAccountPlatform(item.platform as PlatformId) }} title="Изменить площадку"><Pencil size={15} /></button><button type="button" onClick={() => void removeSocialAccount(item)} disabled={pending === `delete:${item.id}`} title="Удалить площадку">{pending === `delete:${item.id}` ? <LoaderCircle className="spin" size={15} /> : <Trash2 size={15} />}</button></div></article>)}</div> : <div className="inline-note">Площадки пока не добавлены.</div>}
     </section>
   </div>
 }

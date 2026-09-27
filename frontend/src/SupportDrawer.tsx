@@ -4,18 +4,11 @@ import {
   ApiError, CurrentUser, assignSupportTicket, createSupportTicket, decideRecovery,
   loadSupportTicket, postSupportMessage, transitionSupportTicket,
 } from './api'
+import { statusLabel, supportCategoryLabel, supportCategoryLabels } from './labels'
 
 type Json = Record<string, any>
 type SupportMode = 'create' | 'details'
 
-const statusLabels: Record<string, string> = {
-  new: 'Новое', in_progress: 'В работе', waiting_blogger: 'Ждём блогера',
-  resolved: 'Решено', closed: 'Закрыто',
-}
-const categoryLabels: Record<string, string> = {
-  general: 'Общий вопрос', content: 'Контент', payment: 'Выплата',
-  technical: 'Техническая проблема', account_recovery: 'Восстановление аккаунта',
-}
 const transitions: Record<string, string[]> = {
   new: ['in_progress', 'waiting_blogger', 'resolved'],
   in_progress: ['waiting_blogger', 'resolved'],
@@ -95,11 +88,11 @@ export function SupportDrawer({ mode, ticketId, user, close, changed }: {
       <header className="work-drawer__head"><div><h2 id="support-title">{mode === 'create' ? 'Новое обращение' : ticket?.subject ?? 'Обращение'}</h2><p>{mode === 'create' ? 'Вопрос команде поддержки' : ticket?.ticket_number ?? 'Загружаем данные'}</p></div><button type="button" className="icon-button" onClick={close} title="Закрыть"><ArrowLeft size={19} /></button></header>
       {loading ? <div className="drawer-loading"><LoaderCircle className="spin" size={20} />Загружаем диалог</div> : <form className="work-form" onSubmit={submit}>
         {mode === 'create' ? <section className="form-section"><h3><MessageSquareText size={16} />Суть вопроса</h3><div className="form-grid">
-          <Field label="Категория"><select name="category" defaultValue="general">{Object.entries(categoryLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></Field>
+          <Field label="Категория"><select name="category" defaultValue="general">{Object.entries(supportCategoryLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></Field>
           <Field label="Тема" wide><input name="subject" minLength={3} maxLength={200} required /></Field>
           <Field label="Сообщение" wide><textarea name="body" rows={7} maxLength={10000} required /></Field>
         </div></section> : ticket ? <>
-          <section className="support-meta"><span>{categoryLabels[ticket.category] ?? ticket.category}</span><b>{statusLabels[ticket.status] ?? ticket.status}</b>{staff ? <small>{ticket.assigned_to_user_id ? 'Назначено сотруднику' : 'Без исполнителя'}</small> : null}</section>
+          <section className="support-meta"><span>{supportCategoryLabel(ticket.category)}</span><b>{statusLabel(ticket.status)}</b>{staff ? <small>{ticket.assigned_to_user_id ? 'Назначено сотруднику' : 'Без исполнителя'}</small> : null}</section>
           <section className="support-thread" aria-label="Переписка">{(ticket.messages ?? []).map((message: Json) => {
             const mine = staff ? message.author_type === 'staff' && message.author_user_id === user.id : message.author_type !== 'staff'
             return <article className={mine ? 'support-message support-message--mine' : 'support-message'} key={message.id}><div><b>{message.author_type === 'staff' ? 'Команда AMP' : 'Блогер'}</b><time>{displayTime(message.created_at)}</time></div><p>{message.body}</p></article>
@@ -108,7 +101,7 @@ export function SupportDrawer({ mode, ticketId, user, close, changed }: {
           <section className="form-section support-compose">
             {operation === 'message' ? <Field label="Сообщение" wide><textarea name="body" rows={4} maxLength={10000} required disabled={!canMessage} placeholder={canMessage ? 'Введите ответ' : 'Для ответа измените статус обращения'} /></Field> : null}
             {operation === 'assign' ? <Field label="Комментарий" wide><textarea name="reason" rows={3} maxLength={2000} /></Field> : null}
-            {operation === 'status' ? <div className="form-grid"><Field label="Новый статус"><select name="to_status">{allowedTransitions.map((item) => <option value={item} key={item}>{statusLabels[item]}</option>)}</select></Field><Field label="Причина" wide><textarea name="reason" rows={3} /></Field></div> : null}
+            {operation === 'status' ? <div className="form-grid"><Field label="Новый статус"><select name="to_status">{allowedTransitions.map((item) => <option value={item} key={item}>{statusLabel(item)}</option>)}</select></Field><Field label="Причина" wide><textarea name="reason" rows={3} /></Field></div> : null}
             {operation === 'recovery' ? <div className="form-grid"><Field label="Решение"><select name="decision"><option value="approve">Восстановить</option><option value="reject">Отказать</option></select></Field><Field label="Обоснование" wide><textarea name="reason" minLength={3} rows={3} required /></Field></div> : null}
           </section>
         </> : null}

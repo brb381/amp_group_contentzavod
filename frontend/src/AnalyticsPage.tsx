@@ -4,7 +4,7 @@ import {
   Package, RefreshCw, Trophy, Video, WifiOff,
 } from 'lucide-react'
 import { AnalyticsFilters, ApiError, JsonObject, PagePayload, Role, listProducts, loadStaffAnalytics } from './api'
-import { platformIds, platforms } from './platforms'
+import { platformConfig, platformIds, platforms } from './platforms'
 
 type Json = Record<string, any>
 const numeric = (value = 0) => new Intl.NumberFormat('ru-RU').format(value)
@@ -25,7 +25,7 @@ function Breakdown({ title, items }: { title: string; items: Json[] }) {
   return <section className="panel analytics-breakdown">
     <div className="panel__head"><div><h2>{title}</h2><p>Просмотры и начисления</p></div></div>
     <div className="breakdown-list">{items.slice(0, 8).map((item) => <article key={item.key}>
-      <div><strong>{item.label}</strong><small>{numeric(item.publications)} публикаций · {rubles(item.accrual_kopecks)}</small></div>
+      <div><strong>{title === 'По площадкам' ? platformConfig(item.key ?? item.label).label : item.label || 'Без названия'}</strong><small>{numeric(item.publications)} публикаций · {rubles(item.accrual_kopecks)}</small></div>
       <span>{numeric(item.views)}</span>
       <i><em style={{ width: `${Math.max(3, Number(item.views ?? 0) / maximum * 100)}%` }} /></i>
     </article>)}{!items.length ? <div className="analytics-empty">Нет данных за выбранный период</div> : null}</div>

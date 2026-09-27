@@ -1,4 +1,4 @@
-export type PlatformId = 'youtube' | 'vk' | 'tiktok' | 'instagram' | 'dzen' | 'rutube'
+﻿export type PlatformId = 'youtube' | 'vk' | 'tiktok' | 'instagram' | 'dzen' | 'rutube'
 
 type PlatformConfig = {
   label: string
@@ -21,29 +21,34 @@ export const platformIds = Object.keys(platforms) as PlatformId[]
 
 export function platformConfig(value?: string | null): PlatformConfig {
   return platforms[value as PlatformId] ?? {
-    label: value || 'Площадка', shortLabel: String(value || '—').slice(0, 2).toUpperCase(),
+    label: 'Другая площадка', shortLabel: '—',
     accountPlaceholder: 'https://...', publicationPlaceholder: 'https://...', automaticReadings: false,
   }
 }
 
 export const enrichmentLabels: Record<string, string> = {
-  not_requested: 'Не запускался', pending: 'В очереди', processing: 'Получаем данные',
-  succeeded: 'Данные получены', retry_wait: 'Повторим позже', failed: 'Ошибка сбора',
+  not_requested: 'Обновление ещё не запускалось', pending: 'Ожидает обновления',
+  processing: 'Данные обновляются', succeeded: 'Данные обновлены',
+  retry_wait: 'Повторная попытка позже', failed: 'Не удалось обновить данные',
 }
 
 export const availabilityLabels: Record<string, string> = {
-  unknown: 'Проверяется', available: 'Доступна', unavailable: 'Недоступна',
+  unknown: 'Доступность уточняется', available: 'Публикация доступна', unavailable: 'Публикация недоступна',
 }
 
 export const readingSourceLabels: Record<string, string> = {
-  manual: 'Вручную', youtube_api: 'YouTube', tiktok_public: 'TikTok',
+  manual: 'Внесено вручную', youtube_api: 'YouTube', tiktok_public: 'TikTok',
   vk_public: 'VK', rutube_public: 'RUTUBE',
 }
 
-export const riskFlagLabels: Record<string, string> = {
-  random_review: 'Выбрано для случайной проверки',
-}
+export const enrichmentLabel = (value: unknown) =>
+  typeof value === 'string' ? enrichmentLabels[value] ?? 'Обновление данных' : 'Обновление данных'
 
+export const availabilityLabel = (value: unknown) =>
+  typeof value === 'string' ? availabilityLabels[value] ?? 'Доступность уточняется' : 'Доступность уточняется'
+
+export const readingSourceLabel = (value: unknown) =>
+  typeof value === 'string' ? readingSourceLabels[value] ?? 'Автоматический сбор' : 'Автоматический сбор'
 
 export const visibleRiskFlags = (flags: unknown): string[] =>
   Array.isArray(flags) ? flags.filter((flag): flag is string =>

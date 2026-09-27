@@ -1,17 +1,9 @@
 import { FormEvent, ReactNode, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, CalendarDays, Download, FileSpreadsheet, LoaderCircle, RefreshCw, ArrowLeft } from 'lucide-react'
 import { ApiError, createExport, downloadExport, loadExport } from './api'
+import { exportFormatLabel, exportTypeLabel, exportTypeLabels, integrationErrorLabel, statusLabel } from './labels'
 
 type Json = Record<string, any>
-const exportLabels: Record<string, string> = {
-  bloggers: 'Блогеры', social_accounts: 'Социальные аккаунты', publications: 'Публикации',
-  view_readings: 'Показания просмотров', moderation_history: 'История модерации', accruals: 'Начисления',
-  payout_register: 'Реестр выплат', payout_history: 'История выплат', support_tickets: 'Обращения', audit_log: 'Журнал безопасности',
-}
-const statusLabels: Record<string, string> = {
-  pending: 'Ожидает очереди', queued: 'В очереди', processing: 'Формируется', retry_wait: 'Ожидает повтора',
-  ready: 'Готово', failed: 'Ошибка', expired: 'Срок хранения истёк',
-}
 const ongoing = ['pending', 'queued', 'processing', 'retry_wait']
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -67,15 +59,15 @@ export function ExportDrawer({ exportId, close, changed }: { exportId?: string; 
   }
 
   return <div className="drawer-layer" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) close() }}><aside className="work-drawer" role="dialog" aria-modal="true" aria-labelledby="export-title">
-    <header className="work-drawer__head"><div><h2 id="export-title">{exportId ? 'Выгрузка' : 'Новая выгрузка'}</h2><p>{exportId ? exportLabels[job?.export_type] ?? 'Состояние фоновой задачи' : 'Файл формируется отдельным worker'}</p></div><button type="button" className="icon-button" onClick={close} title="Закрыть"><ArrowLeft size={19} /></button></header>
+    <header className="work-drawer__head"><div><h2 id="export-title">{exportId ? 'Выгрузка' : 'Новая выгрузка'}</h2><p>{exportId ? exportTypeLabel(job?.export_type) : 'Файл формируется в фоновом режиме'}</p></div><button type="button" className="icon-button" onClick={close} title="Закрыть"><ArrowLeft size={19} /></button></header>
     {loading ? <div className="drawer-loading"><LoaderCircle className="spin" size={20} />Получаем состояние</div> : exportId && job ? <div className="work-form">
-      <section className="export-state"><span className={`export-state__icon export-state__icon--${job.status}`}><FileSpreadsheet size={23} /></span><div><span>{statusLabels[job.status] ?? job.status}</span><strong>{exportLabels[job.export_type] ?? job.export_type}</strong><small>{String(job.format).toUpperCase()} · {job.row_count == null ? 'число строк пока неизвестно' : job.row_count + ' строк'}</small></div></section>
-      <section className="form-section"><h3><CalendarDays size={16} />Параметры</h3><div className="export-details"><span><small>Создано</small>{job.created_at ? new Date(job.created_at).toLocaleString('ru-RU') : '—'}</span><span><small>Попыток</small>{job.attempt_count ?? 0}</span><span><small>Актуальность данных</small>{job.data_as_of ? new Date(job.data_as_of).toLocaleString('ru-RU') : '—'}</span><span><small>Хранится до</small>{job.expires_at ? new Date(job.expires_at).toLocaleString('ru-RU') : '—'}</span></div>{job.error_code ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Worker завершил задачу с ошибкой</b>{job.error_code}</span></div> : null}</section>
+      <section className="export-state"><span className={`export-state__icon export-state__icon--${job.status}`}><FileSpreadsheet size={23} /></span><div><span>{statusLabel(job.status)}</span><strong>{exportTypeLabel(job.export_type)}</strong><small>{exportFormatLabel(job.format)} · {job.row_count == null ? 'число строк пока неизвестно' : job.row_count + ' строк'}</small></div></section>
+      <section className="form-section"><h3><CalendarDays size={16} />Параметры</h3><div className="export-details"><span><small>Создано</small>{job.created_at ? new Date(job.created_at).toLocaleString('ru-RU') : '—'}</span><span><small>Попыток</small>{job.attempt_count ?? 0}</span><span><small>Актуальность данных</small>{job.data_as_of ? new Date(job.data_as_of).toLocaleString('ru-RU') : '—'}</span><span><small>Хранится до</small>{job.expires_at ? new Date(job.expires_at).toLocaleString('ru-RU') : '—'}</span></div>{job.error_code ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Не удалось сформировать файл</b>{integrationErrorLabel(job.error_code)}</span></div> : null}</section>
       {error ? <div className="auth-error"><AlertTriangle size={16} />{error}</div> : null}
       <footer className="work-form__actions"><button type="button" className="button button--secondary" onClick={() => void reload()}><RefreshCw size={17} />Обновить</button>{job.status === 'ready' ? <button type="button" className="button button--primary" onClick={getFile} disabled={pending}><Download size={17} />Скачать</button> : null}</footer>
     </div> : <form className="work-form" onSubmit={submit}>
       <section className="form-section"><h3><FileSpreadsheet size={16} />Состав файла</h3><div className="form-grid">
-        <Field label="Тип данных"><select name="export_type" value={exportType} onChange={(event) => setExportType(event.target.value)}>{Object.entries(exportLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></Field>
+        <Field label="Тип данных"><select name="export_type" value={exportType} onChange={(event) => setExportType(event.target.value)}>{Object.entries(exportTypeLabels).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select></Field>
         <Field label="Формат"><select name="format" defaultValue="xlsx"><option value="xlsx">Excel (.xlsx)</option><option value="csv">CSV (.csv)</option></select></Field>
         <Field label="Дата с"><input name="date_from" type="date" defaultValue={localDate(-30)} required /></Field>
         <Field label="Дата по"><input name="date_to" type="date" defaultValue={localDate()} required /></Field>

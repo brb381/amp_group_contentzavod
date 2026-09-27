@@ -4,15 +4,10 @@ import {
   ApiError, createPublication, deletePublication, loadVideoCardDetails,
   submitPublication, updateManualReading, updatePublication, updateVideoCard,
 } from './api'
-import { platformConfig, readingSourceLabels, riskFlagLabels, visibleRiskFlags } from './platforms'
+import { platformConfig, readingSourceLabel, visibleRiskFlags } from './platforms'
+import { riskFlagLabel, statusLabel } from './labels'
 
 type Json = Record<string, any>
-const statusLabels: Record<string, string> = {
-  draft: 'Черновик', pending: 'На проверке', pending_review: 'На модерации',
-  approved: 'Одобрено', rejected: 'Отклонено', changes_required: 'Нужны изменения',
-  re_review_required: 'Нужна повторная модерация', inactive: 'Неактивно',
-  accepted: 'Принято', corrected: 'Исправлено',
-}
 const number = (value?: number) => value == null ? '—' : new Intl.NumberFormat('ru-RU').format(value)
 
 export function EntityDrawer({ kind, id, payload, close, changed }: {
@@ -133,7 +128,7 @@ export function EntityDrawer({ kind, id, payload, close, changed }: {
           <section className="operation-summary">
             <span><Video size={22} /></span>
             <div><small>Товар</small><strong>{card.product_snapshot?.publication_name || card.reported_product?.name || 'Не указан'}</strong></div>
-            <b>{statusLabels[card.status] ?? card.status}</b>
+            <b>{statusLabel(card.status)}</b>
           </section>
           <section className="form-section">
             <h3>Карточка</h3>
@@ -179,7 +174,7 @@ export function EntityDrawer({ kind, id, payload, close, changed }: {
                     <small className="publication-views"><Eye size={13} />{viewCount == null ? 'Просмотры ещё не собраны' : `${number(viewCount)} просмотров`}</small>
                     {item.moderation_reason ? <small className="moderation-reason">{item.moderation_reason}</small> : null}
                   </div>
-                  <b>{statusLabels[item.status] ?? item.status}</b>
+                  <b>{statusLabel(item.status)}</b>
                   {submittable ? <span className="publication-actions">
                     {editable ? <button type="button" title="Изменить ссылку" onClick={() => setEditingPublication(item)}><Pencil size={14} /></button> : null}
                     <button type="button" title="Отправить на модерацию" onClick={() => sendPublication(item.id)}><Send size={14} /></button>
@@ -203,17 +198,17 @@ export function EntityDrawer({ kind, id, payload, close, changed }: {
           <section className="operation-summary">
             <span><Eye size={22} /></span>
             <div><small>Заявленное значение</small><strong>{number(reading.reported_value)} просмотров</strong></div>
-            <b>{statusLabels[reading.status] ?? reading.status}</b>
+            <b>{statusLabel(reading.status)}</b>
           </section>
           <section className="form-section">
             <h3>Проверка</h3>
             <div className="export-details">
-              <span><small>Источник</small>{readingSourceLabels[reading.source] ?? reading.source ?? readingSourceLabels.manual}</span>
+              <span><small>Источник</small>{readingSourceLabel(reading.source)}</span>
               <span><small>Принятое значение</small>{number(reading.accepted_value ?? reading.reported_value)}</span>
               <span><small>Период</small>{reading.reporting_period ? new Date(reading.reporting_period).toLocaleDateString('ru-RU', { timeZone: 'Europe/Moscow' }) : '—'}</span>
               <span><small>Зафиксировано</small>{reading.captured_at ? new Date(reading.captured_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' }) : '—'}</span>
             </div>
-            {visibleRiskFlags(reading.risk_flags).length ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Особенности данных</b>{visibleRiskFlags(reading.risk_flags).map((flag: string) => riskFlagLabels[flag] ?? flag).join(', ')}</span></div> : null}
+            {visibleRiskFlags(reading.risk_flags).length ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Требуется проверка</b>{visibleRiskFlags(reading.risk_flags).map(riskFlagLabel).join(', ')}</span></div> : null}
             {reading.source === 'manual' && reading.status === 'pending' ? <form className="reading-edit" onSubmit={saveReading}>
               <label className="form-field"><span>Исправленное значение</span><input name="reading_value" type="number" min="0" defaultValue={reading.reported_value} required /></label>
               <button className="button button--primary" disabled={pending}><Save size={16} />Сохранить показание</button>

@@ -1,3 +1,5 @@
+import { apiErrorMessage } from './labels'
+
 export type Role = 'blogger' | 'moderator' | 'manager' | 'finance' | 'analyst' | 'admin'
 export type PageId =
   | 'overview'
@@ -38,7 +40,7 @@ export class ApiError extends Error {
   requestId?: string
 
   constructor(status: number, body: ApiErrorBody) {
-    super(body.error?.message ?? body.detail ?? 'Не удалось выполнить запрос')
+    super(apiErrorMessage(status, body.error?.code))
     this.name = 'ApiError'
     this.status = status
     this.code = body.error?.code ?? 'REQUEST_FAILED'

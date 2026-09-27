@@ -8,18 +8,11 @@ import {
   createAccountDeletion, listNotificationTemplates, loadAccountSettings, requestEmailVerification, saveProgramSettings,
 } from './api'
 import { CreatorProfileSection } from './CreatorProfileSection'
+import { documentLabel, lifecycleActivityLabel, roleLabels, statusLabel } from './labels'
 
 type Json = Record<string, any>
 type AccountSection = 'overview' | 'profile' | 'email' | 'documents' | 'program' | 'notifications' | 'activity' | 'account'
 
-const roleLabels: Record<string, string> = {
-  blogger: 'Блогер', moderator: 'Модератор', manager: 'Менеджер', finance: 'Финансы',
-  analyst: 'Аналитик', admin: 'Администратор',
-}
-const documentLabels: Record<string, string> = {
-  program_terms: 'Условия программы', personal_data_consent: 'Согласие на обработку данных',
-  privacy_policy: 'Политика конфиденциальности',
-}
 
 function SectionButton({ active, icon, label, note, onClick }: {
   active: boolean; icon: ReactNode; label: string; note?: string; onClick: () => void;
@@ -176,7 +169,7 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
               <button type="button" onClick={() => setSection('email')}><StatusLine complete={emailComplete} title="Электронная почта" description={emailComplete ? 'Адрес подтверждён' : 'Подтвердите адрес почты'} /></button>
               <button type="button" onClick={() => setSection('documents')}><StatusLine complete={documentsComplete} title="Документы" description={documentsComplete ? 'Все обязательные документы приняты' : `Осталось принять: ${requiredDocuments.length}`} /></button>
             </div>
-            <dl className="account-facts"><div><dt>Роль</dt><dd>{roleLabels[user.role]}</dd></div><div><dt>Статус</dt><dd>{user.status === 'active' ? 'Активен' : user.status}</dd></div><div><dt>Принято документов</dt><dd>{acceptedDocuments.length}</dd></div></dl>
+            <dl className="account-facts"><div><dt>Роль</dt><dd>{roleLabels[user.role]}</dd></div><div><dt>Статус</dt><dd>{statusLabel(user.status)}</dd></div><div><dt>Принято документов</dt><dd>{acceptedDocuments.length}</dd></div></dl>
             {data?.programSettings?.manager_telegram_url ? <a className="button button--secondary manager-link" href={data.programSettings.manager_telegram_url} target="_blank" rel="noreferrer"><ExternalLink size={16} />Написать менеджеру{data.programSettings.manager_name ? ` · ${data.programSettings.manager_name}` : ''}</a> : null}
           </> : null}
 
@@ -190,8 +183,8 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
 
           {section === 'documents' ? <>
             <div className="account-section-head"><span>Юридический статус</span><h3>Документы</h3><p>Актуальные согласия и условия участия хранятся вместе с датой принятия.</p></div>
-            {requiredDocuments.length ? <div className="legal-required"><h4>Требуют принятия</h4>{requiredDocuments.map((item: Json) => <div key={item.document_id}><span><b>{documentLabels[item.document_type] ?? item.document_type}</b><small>Версия {item.version}</small></span><button className="button button--secondary" onClick={() => void accept(item.document_id)} disabled={pending === item.document_id}>{pending === item.document_id ? <LoaderCircle className="spin" size={15} /> : null}Принять</button></div>)}</div> : <StatusLine complete title="Все документы приняты" description="Юридических ограничений для работы с системой нет." />}
-            {acceptedDocuments.length ? <div className="accepted-documents"><h4>История принятия</h4>{acceptedDocuments.map((item: Json, index: number) => <div key={item.id ?? index}><FileCheck2 size={16} /><span><b>{documentLabels[item.document_type] ?? item.title ?? 'Документ'}</b><small>{item.accepted_at ? new Date(item.accepted_at).toLocaleString('ru-RU') : `Версия ${item.version ?? 'актуальная'}`}</small></span></div>)}</div> : null}
+            {requiredDocuments.length ? <div className="legal-required"><h4>Требуют принятия</h4>{requiredDocuments.map((item: Json) => <div key={item.document_id}><span><b>{documentLabel(item.document_type)}</b><small>Версия {item.version}</small></span><button className="button button--secondary" onClick={() => void accept(item.document_id)} disabled={pending === item.document_id}>{pending === item.document_id ? <LoaderCircle className="spin" size={15} /> : null}Принять</button></div>)}</div> : <StatusLine complete title="Все документы приняты" description="Юридических ограничений для работы с системой нет." />}
+            {acceptedDocuments.length ? <div className="accepted-documents"><h4>История принятия</h4>{acceptedDocuments.map((item: Json, index: number) => <div key={item.id ?? index}><FileCheck2 size={16} /><span><b>{documentLabel(item.document_type)}</b><small>{item.accepted_at ? new Date(item.accepted_at).toLocaleString('ru-RU') : `Версия ${item.version ?? 'актуальная'}`}</small></span></div>)}</div> : null}
           </> : null}
 
           {section === 'program' ? <>
@@ -211,7 +204,7 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
 
           {section === 'notifications' ? <>
             <div className="account-section-head"><span>Системные сообщения</span><h3>Шаблоны уведомлений</h3><p>Каждое сохранение создаёт новую неизменяемую версию выбранного шаблона.</p></div>
-            <label className="form-field"><span>Шаблон</span><select value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}>{(data?.notificationTemplates?.items ?? []).map((item: Json) => <option key={item.id} value={item.id}>{item.code} · {item.channel} · v{item.version}</option>)}</select></label>
+            <label className="form-field"><span>Шаблон</span><select value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}>{(data?.notificationTemplates?.items ?? []).map((item: Json) => <option key={item.id} value={item.id}>{item.title_template || item.subject_template || 'Шаблон уведомления'} · {item.channel === 'email' ? 'Электронная почта' : item.channel === 'in_app' ? 'В приложении' : 'Канал уведомления'}</option>)}</select></label>
             {(() => {
               const template = (data?.notificationTemplates?.items ?? []).find((item: Json) => item.id === selectedTemplate)
               return template ? <form className="notification-template-form" key={template.id} onSubmit={saveNotificationTemplate}>
@@ -225,12 +218,12 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
           </> : null}
           {section === 'activity' && data?.lifecycle ? <>
             <div className="account-section-head"><span>Участие в программе</span><h3>Активность</h3><p>Система учитывает действия в кабинете и заранее показывает плановое изменение статуса.</p></div>
-            <dl className="account-facts account-facts--stack"><div><dt>Последняя активность</dt><dd>{new Date(data.lifecycle.last_activity_at).toLocaleString('ru-RU')}</dd></div><div><dt>Тип активности</dt><dd>{data.lifecycle.last_activity_kind ?? 'Действие в кабинете'}</dd></div><div><dt>Следующее изменение</dt><dd>{data.lifecycle.next_transition_at ? new Date(data.lifecycle.next_transition_at).toLocaleString('ru-RU') : 'Не запланировано'}</dd></div></dl>
+            <dl className="account-facts account-facts--stack"><div><dt>Последняя активность</dt><dd>{new Date(data.lifecycle.last_activity_at).toLocaleString('ru-RU')}</dd></div><div><dt>Тип активности</dt><dd>{lifecycleActivityLabel(data.lifecycle.last_activity_kind)}</dd></div><div><dt>Следующее изменение</dt><dd>{data.lifecycle.next_transition_at ? new Date(data.lifecycle.next_transition_at).toLocaleString('ru-RU') : 'Не запланировано'}</dd></div></dl>
           </> : null}
 
           {section === 'account' ? <>
             <div className="account-section-head"><span>Безопасность</span><h3>Управление аккаунтом</h3><p>Текущая роль и состояние доступа назначаются системой и ответственными сотрудниками.</p></div>
-            <dl className="account-facts"><div><dt>Роль</dt><dd>{roleLabels[user.role]}</dd></div><div><dt>Статус доступа</dt><dd>{user.status === 'active' ? 'Активен' : user.status}</dd></div></dl>
+            <dl className="account-facts"><div><dt>Роль</dt><dd>{roleLabels[user.role]}</dd></div><div><dt>Статус доступа</dt><dd>{statusLabel(user.status)}</dd></div></dl>
             {user.role === 'blogger' ? <section className="account-danger"><h4><ShieldAlert size={17} />Удаление аккаунта</h4>{activeDeletion ? <div className="settings-action"><span><b>Ожидается подтверждение</b><small>Ссылка действует до {new Date(activeDeletion.expires_at).toLocaleString('ru-RU')}.</small></span><button className="button button--secondary" onClick={cancelDeletionRequest} disabled={pending === 'cancel-delete'}>Отменить запрос</button></div> : <form onSubmit={requestDeletion}><p>После подтверждения по электронной почте данные будут обработаны согласно политике удаления.</p><label className="form-field"><span>Текущий пароль</span><input name="password" type="password" autoComplete="current-password" required /></label><button className="button button--secondary" disabled={pending === 'delete'}>{pending === 'delete' ? <LoaderCircle className="spin" size={16} /> : <ShieldAlert size={16} />}Запросить удаление</button></form>}</section> : null}
           </> : null}
 

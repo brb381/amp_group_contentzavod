@@ -32,12 +32,17 @@ try {
     })
     if (!loaded) throw new Error(label + ' image and fallback did not load')
   }
-  const assertBloggerCopyIsClean = async () => {
-    const content = await page.locator('main').innerText()
-    const forbidden = ['backend', 'API', 'active queues', 'autocollection']
+  const assertCopyIsClean = async (scope = 'body') => {
+    const content = await page.locator(scope).innerText()
+    const forbidden = [
+      'backend', 'worker', 'active queues', 'autocollection', 'unusual_growth',
+      'preliminary', 'retry_wait', 'missing_current_reading', 'baseline_only',
+      'approximate_public_counter', 'request id',
+    ]
     const exposed = forbidden.find((value) => content.toLowerCase().includes(value.toLowerCase()))
-    if (exposed) throw new Error('Technical copy is exposed to blogger: ' + exposed)
+    if (exposed) throw new Error('Technical copy is exposed in UI: ' + exposed)
   }
+  const assertBloggerCopyIsClean = () => assertCopyIsClean('main')
 
   if (process.env.AMP_E2E_OVERVIEW_ONLY) {
     await page.getByRole('heading', { name: 'Рабочий стол' }).waitFor()
@@ -61,8 +66,10 @@ try {
       if ((await page.locator('.work-drawer').innerText()).includes('Публичный счётчик может быть округлён')) throw new Error('Approximate counter warning is exposed')
       await page.getByTitle('Закрыть').click()
     }
-    await page.getByRole('button', { name: 'Профиль' }).click()
-    await page.getByRole('heading', { name: 'Профиль блогера' }).waitFor()
+    await openNav()
+    await page.getByRole('button', { name: 'Личный кабинет' }).click()
+    await page.getByRole('heading', { name: 'Личный кабинет' }).waitFor()
+    await page.locator('.account-nav button').filter({ hasText: 'Профиль и площадки' }).click()
     await page.locator('.drawer-loading').waitFor({ state: 'hidden' })
     const platformSelect = page.locator('select[name="platform"]')
     await platformSelect.selectOption('tiktok')
@@ -149,6 +156,7 @@ try {
     }
     console.log('E2E smoke passed: login, session, dashboard and exports')
   }
+  await assertCopyIsClean()
   await page.waitForTimeout(350)
   if (apiServerErrors.length) throw new Error('API server errors: ' + [...new Set(apiServerErrors)].join(', '))
   if (process.env.AMP_E2E_SCREENSHOT) await page.screenshot({ path: process.env.AMP_E2E_SCREENSHOT, fullPage: true })
