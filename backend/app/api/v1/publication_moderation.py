@@ -9,7 +9,7 @@ from app.audit.http import context_from_request
 from app.auth.dependencies import require_active_roles, require_csrf
 from app.auth.models import Role, User
 from app.catalog.models import Brand
-from app.content.models import PublicationParseStatus, PublicationStatus
+from app.content.models import PublicationAvailability, PublicationParseStatus, PublicationStatus
 from app.content.moderation_service import (
     deactivate_publication,
     get_publication_moderation_detail,
@@ -61,6 +61,7 @@ def get_publication_queue(
     date_to: date | None = Query(default=None, alias="dateTo"),
     reason: str | None = Query(default=None, min_length=1, max_length=500),
     parse_status: PublicationParseStatus | None = Query(default=None, alias="parseStatus"),
+    availability: PublicationAvailability | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     db: Session = Depends(get_db, scope="function"),
@@ -70,6 +71,7 @@ def get_publication_queue(
         publication_status=None if all_statuses else publication_status,
         platform=platform,
         parse_status=parse_status,
+        availability=availability,
         blogger_id=blogger_id,
         blogger=blogger,
         brand=brand,

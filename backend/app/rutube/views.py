@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from app.clock import utc_now
 from app.program.service import suspicious_growth_threshold
 from app.content.models import Publication, PublicationAvailability
 from app.contracts import RutubeViewCollectionCommand
+from app.external_jobs import MAX_EXTERNAL_JOB_ATTEMPTS
 from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.readings.models import ReadingSource, ReadingStatus, ViewReading, ViewReadingHistory
@@ -18,8 +20,15 @@ from app.readings.revision import lock_reading_dataset_revision
 from app.rutube.client import RutubeClient, RutubeClientError
 from app.rutube.models import RutubeViewCollectionJob
 from app.rutube.schemas import RutubeVideo
-from app.rutube.service import MAX_TRANSIENT_ATTEMPTS, TRANSIENT_REASONS, _retry_after
+from app.rutube.service import (
+    TRANSIENT_REASONS,
+    WORKER_UNEXPECTED_ERROR,
+    _retry_after,
+)
 from app.rutube_config import RutubeWorkerSettings
+
+
+logger = logging.getLogger(__name__)
 
 
 def _provider(db) -> ExternalProviderState:
@@ -88,7 +97,7 @@ def _record_error(
             provider.status = "blocked"
             provider.blocked_until = retry_at
             provider.block_reason = error.reason
-        should_retry = transient and job.attempt_count < MAX_TRANSIENT_ATTEMPTS
+        should_retry = transient and job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
         job.state = "retry_wait" if should_retry else "failed"
         job.available_at = retry_at or now
         job.lease_until = None
@@ -97,6 +106,14 @@ def _record_error(
         publication = db.get(Publication, job.publication_id)
         if publication and error.reason == "rutube_not_found":
             publication.availability = PublicationAvailability.UNAVAILABLE
+            publication.external_title = None
+            publication.external_author_id = None
+            publication.external_author_name = None
+            publication.external_published_at = None
+            publication.external_duration_seconds = None
+            publication.external_thumbnail_url = None
+            publication.external_etag = None
+            publication.enriched_at = now
         db.commit()
     except Exception:
         db.rollback()
@@ -208,10 +225,17 @@ def execute_rutube_view_collection(
 ) -> None:
     if not _claim(command, session_factory):
         return
-    client = client or RutubeClient(timeout_seconds=settings.rutube_request_timeout_seconds)
     try:
-        response = client.fetch_video(command.external_id)
-    except RutubeClientError as error:
-        _record_error(command, error, session_factory)
-        return
-    _apply_success(command, response, settings, session_factory)
+        client = client or RutubeClient(timeout_seconds=settings.rutube_request_timeout_seconds)
+        try:
+            response = client.fetch_video(command.external_id)
+        except RutubeClientError as error:
+            _record_error(command, error, session_factory)
+            return
+        _apply_success(command, response, settings, session_factory)
+    except Exception:
+        logger.exception(
+            "Unexpected Rutube view worker error",
+            extra={"dispatch_id": str(command.dispatch_id)},
+        )
+        _record_error(command, RutubeClientError(500, WORKER_UNEXPECTED_ERROR), session_factory)

@@ -83,6 +83,7 @@ def list_publications_for_moderation(
     publication_status: PublicationStatus | None,
     platform: Platform | None,
     parse_status: PublicationParseStatus | None,
+    availability: PublicationAvailability | None = None,
     blogger_id: uuid.UUID | None,
     blogger: str | None,
     brand: Brand | None,
@@ -101,6 +102,8 @@ def list_publications_for_moderation(
         filters.append(Publication.platform == platform)
     if parse_status:
         filters.append(Publication.parse_status == parse_status)
+    if availability:
+        filters.append(Publication.availability == availability)
     if blogger_id:
         filters.append(VideoCard.blogger_id == blogger_id)
     if blogger:

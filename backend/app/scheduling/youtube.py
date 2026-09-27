@@ -15,8 +15,14 @@ from app.contracts import (
     YouTubeViewCollectionCommand,
     YouTubeViewCommandItem,
 )
-from app.content.models import Publication, PublicationStatus
+from app.content.models import (
+    Publication,
+    PublicationAvailability,
+    PublicationEnrichmentStatus,
+    PublicationStatus,
+)
 from app.database.factory import create_session_factory
+from app.external_jobs import MAX_EXTERNAL_JOB_ATTEMPTS
 from app.platforms import Platform
 from app.readings.models import YouTubeViewCollectionJob
 from app.scheduler_config import get_scheduler_settings
@@ -131,11 +137,20 @@ def dispatch_youtube_batch(
             )
         )
         for job in expired:
-            job.state = "retry_wait"
+            should_retry = job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
+            job.state = "retry_wait" if should_retry else "failed"
             job.available_at = now
             job.lease_until = None
             job.dispatch_id = None
             job.last_error_code = "worker_lease_expired"
+            publication = db.get(Publication, job.publication_id)
+            if publication:
+                publication.enrichment_status = (
+                    PublicationEnrichmentStatus.RETRY_WAIT
+                    if should_retry
+                    else PublicationEnrichmentStatus.FAILED
+                )
+                publication.enrichment_error_code = "worker_lease_expired"
 
         if not _provider_available(db, now):
             db.commit()
@@ -243,6 +258,7 @@ def _create_view_jobs(db, now: datetime) -> None:
         select(Publication.id, Publication.external_id).where(
             Publication.platform == Platform.YOUTUBE,
             Publication.status == PublicationStatus.APPROVED,
+            Publication.availability != PublicationAvailability.UNAVAILABLE,
             Publication.deleted_at.is_(None),
             Publication.external_id.is_not(None),
             ~select(YouTubeViewCollectionJob.id).where(
@@ -302,7 +318,11 @@ def dispatch_youtube_view_batch(
             )
         )
         for job in expired:
-            job.state = "retry_wait"
+            job.state = (
+                "retry_wait"
+                if job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
+                else "failed"
+            )
             job.available_at = now
             job.lease_until = None
             job.dispatch_id = None

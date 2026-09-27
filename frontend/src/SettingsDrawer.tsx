@@ -88,12 +88,14 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
   const saveNotificationTemplate = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault(); setPending('template'); setError('')
     const form = new FormData(event.currentTarget)
+    const template = (data?.notificationTemplates?.items ?? []).find((item: Json) => item.id === selectedTemplate)
+    if (!template) return setPending('')
     try {
       const created = await createNotificationTemplateVersion(String(form.get('code')), String(form.get('channel')), {
         title_template: String(form.get('title') || '') || null,
         subject_template: String(form.get('subject') || '') || null,
         body_template: String(form.get('body')),
-        allowed_variables: String(form.get('variables') || '').split(',').map((item) => item.trim()).filter(Boolean),
+        allowed_variables: template.allowed_variables ?? [],
       })
       setSelectedTemplate(String(created.id))
       changed('Новая версия шаблона опубликована')
@@ -203,7 +205,7 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
           </> : null}
 
           {section === 'notifications' ? <>
-            <div className="account-section-head"><span>Системные сообщения</span><h3>Шаблоны уведомлений</h3><p>Каждое сохранение создаёт новую неизменяемую версию выбранного шаблона.</p></div>
+            <div className="account-section-head"><span>Системные сообщения</span><h3>Шаблоны уведомлений</h3><p>Получателя выбирает само событие: сообщение уходит только связанному пользователю. Здесь меняется только текст.</p></div>
             <label className="form-field"><span>Шаблон</span><select value={selectedTemplate} onChange={(event) => setSelectedTemplate(event.target.value)}>{(data?.notificationTemplates?.items ?? []).map((item: Json) => <option key={item.id} value={item.id}>{item.title_template || item.subject_template || 'Шаблон уведомления'} · {item.channel === 'email' ? 'Электронная почта' : item.channel === 'in_app' ? 'В приложении' : 'Канал уведомления'}</option>)}</select></label>
             {(() => {
               const template = (data?.notificationTemplates?.items ?? []).find((item: Json) => item.id === selectedTemplate)
@@ -211,7 +213,7 @@ export function SettingsDrawer({ user, close, changed, signedOut }: {
                 <input type="hidden" name="code" value={template.code} /><input type="hidden" name="channel" value={template.channel} />
                 {template.channel === 'in_app' ? <label className="form-field"><span>Заголовок</span><input name="title" defaultValue={template.title_template ?? ''} required /></label> : <label className="form-field"><span>Тема письма</span><input name="subject" defaultValue={template.subject_template ?? ''} required /></label>}
                 <label className="form-field"><span>Текст</span><textarea name="body" defaultValue={template.body_template} rows={9} required /></label>
-                <label className="form-field"><span>Переменные через запятую</span><input name="variables" defaultValue={(template.allowed_variables ?? []).join(', ')} /></label>
+                <div className="inline-note">Поля со знаком $ заполняются системой автоматически. Их названия в тексте изменять не нужно.</div>
                 <button className="button button--primary" disabled={pending === 'template'}>{pending === 'template' ? <LoaderCircle className="spin" size={16} /> : <Save size={16} />}Опубликовать новую версию</button>
               </form> : <div className="inline-note">Шаблоны пока не созданы.</div>
             })()}

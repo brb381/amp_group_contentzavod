@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from app.clock import utc_now
 from app.program.service import random_review_percent, suspicious_growth_threshold
 from app.content.models import Publication, PublicationAvailability
 from app.contracts import YouTubeViewCollectionCommand
+from app.external_jobs import MAX_EXTERNAL_JOB_ATTEMPTS
 from app.readings.models import (
     ReadingSource,
     ReadingStatus,
@@ -24,11 +26,14 @@ from app.youtube.models import ExternalProviderState
 from app.youtube.service import (
     CONFIGURATION_REASONS,
     DAILY_LIMIT_REASONS,
-    MAX_TRANSIENT_ATTEMPTS,
     TRANSIENT_REASONS,
+    WORKER_UNEXPECTED_ERROR,
     _retry_after,
 )
 from app.youtube.time import next_pacific_reset
+
+
+logger = logging.getLogger(__name__)
 
 
 def _provider(db) -> ExternalProviderState:
@@ -95,7 +100,7 @@ def _record_error(command: YouTubeViewCollectionCommand, error: YouTubeClientErr
             should_retry = (
                 is_daily
                 or is_configuration
-                or (is_transient and job.attempt_count < MAX_TRANSIENT_ATTEMPTS)
+                or (is_transient and job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS)
             )
             job.state = "retry_wait" if should_retry else "failed"
             job.available_at = retry_at or now
@@ -132,6 +137,14 @@ def _apply_success(command, response, settings, session_factory) -> None:
                 job.last_error_code = "stale_command"
             elif item.video_id not in counts:
                 publication.availability = PublicationAvailability.UNAVAILABLE
+                publication.external_title = None
+                publication.external_author_id = None
+                publication.external_author_name = None
+                publication.external_published_at = None
+                publication.external_duration_seconds = None
+                publication.external_thumbnail_url = None
+                publication.external_etag = None
+                publication.enriched_at = now
                 job.state = "failed"
                 job.last_error_code = "video_unavailable"
             else:
@@ -207,14 +220,21 @@ def _apply_success(command, response, settings, session_factory) -> None:
 def execute_youtube_view_collection(command, settings, session_factory, client=None) -> None:
     if not _claim(command, session_factory):
         return
-    api_key = settings.youtube_api_key.get_secret_value() if settings.youtube_api_key else None
-    if not api_key:
-        _record_error(command, YouTubeClientError(None, "youtube_api_key_missing"), session_factory)
-        return
-    client = client or YouTubeClient(api_key=api_key, timeout_seconds=settings.youtube_request_timeout_seconds)
     try:
-        response = client.fetch_view_counts([item.video_id for item in command.items])
-    except YouTubeClientError as error:
-        _record_error(command, error, session_factory)
-        return
-    _apply_success(command, response, settings, session_factory)
+        api_key = settings.youtube_api_key.get_secret_value() if settings.youtube_api_key else None
+        if not api_key:
+            _record_error(command, YouTubeClientError(None, "youtube_api_key_missing"), session_factory)
+            return
+        client = client or YouTubeClient(api_key=api_key, timeout_seconds=settings.youtube_request_timeout_seconds)
+        try:
+            response = client.fetch_view_counts([item.video_id for item in command.items])
+        except YouTubeClientError as error:
+            _record_error(command, error, session_factory)
+            return
+        _apply_success(command, response, settings, session_factory)
+    except Exception:
+        logger.exception(
+            "Unexpected YouTube view worker error",
+            extra={"dispatch_id": str(command.dispatch_id)},
+        )
+        _record_error(command, YouTubeClientError(500, WORKER_UNEXPECTED_ERROR), session_factory)

@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from sqlalchemy import select
@@ -5,6 +6,7 @@ from sqlalchemy import select
 from app.clock import utc_now
 from app.content.models import Publication, PublicationAvailability, PublicationEnrichmentStatus
 from app.contracts import VKEnrichmentCommand
+from app.external_jobs import MAX_EXTERNAL_JOB_ATTEMPTS
 from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.vk.client import VKClient, VKClientError
@@ -12,7 +14,8 @@ from app.vk.models import VKEnrichmentJob
 from app.vk_config import VKWorkerSettings
 
 
-MAX_TRANSIENT_ATTEMPTS = 8
+logger = logging.getLogger(__name__)
+WORKER_UNEXPECTED_ERROR = "worker_unexpected_error"
 TRANSIENT_REASONS = {"vk_unreachable", "vk_response_invalid"}
 
 
@@ -137,7 +140,7 @@ def _record_error(
             provider.status = "blocked"
             provider.blocked_until = retry_at
             provider.block_reason = error.reason
-        should_retry = transient and job.attempt_count < MAX_TRANSIENT_ATTEMPTS
+        should_retry = transient and job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
         job.state = "retry_wait" if should_retry else "failed"
         job.available_at = retry_at or now
         job.lease_until = None
@@ -218,13 +221,20 @@ def execute_vk_enrichment(
 ) -> None:
     if not _claim(command, session_factory):
         return
-    client = client or VKClient(timeout_seconds=settings.vk_request_timeout_seconds)
     try:
-        response = client.fetch_publication(command.source_url)
-    except VKClientError as error:
-        if error.reason == "vk_not_found":
-            _finish_unavailable(command, session_factory)
-        else:
-            _record_error(command, error, session_factory)
-        return
-    _apply_success(command, response, session_factory)
+        client = client or VKClient(timeout_seconds=settings.vk_request_timeout_seconds)
+        try:
+            response = client.fetch_publication(command.source_url)
+        except VKClientError as error:
+            if error.reason == "vk_not_found":
+                _finish_unavailable(command, session_factory)
+            else:
+                _record_error(command, error, session_factory)
+            return
+        _apply_success(command, response, session_factory)
+    except Exception:
+        logger.exception(
+            "Unexpected VK enrichment worker error",
+            extra={"dispatch_id": str(command.dispatch_id)},
+        )
+        _record_error(command, VKClientError(500, WORKER_UNEXPECTED_ERROR), session_factory)

@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -12,12 +13,15 @@ from app.content.models import (
     PublicationEnrichmentStatus,
 )
 from app.contracts import YouTubeEnrichmentCommand
+from app.external_jobs import MAX_EXTERNAL_JOB_ATTEMPTS
 from app.youtube.client import YouTubeClient, YouTubeClientError
 from app.youtube.models import ExternalProviderState, YouTubeEnrichmentJob
 from app.youtube.time import next_pacific_reset
 
 
 DAILY_LIMIT_REASONS = {"quotaExceeded", "dailyLimitExceeded"}
+logger = logging.getLogger(__name__)
+WORKER_UNEXPECTED_ERROR = "worker_unexpected_error"
 CONFIGURATION_REASONS = {
     "accessNotConfigured",
     "API_KEY_INVALID",
@@ -31,7 +35,6 @@ TRANSIENT_REASONS = {
     "youtube_unreachable",
     "youtube_response_invalid",
 }
-MAX_TRANSIENT_ATTEMPTS = 8
 ISO_DURATION = re.compile(
     r"^P(?:(?P<days>\d+)D)?(?:T(?:(?P<hours>\d+)H)?(?:(?P<minutes>\d+)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?)?$"
 )
@@ -154,7 +157,7 @@ def _record_error(
         for job in jobs:
             publication = db.get(Publication, job.publication_id)
             should_retry = is_daily or is_configuration or (
-                is_transient and job.attempt_count < MAX_TRANSIENT_ATTEMPTS
+                is_transient and job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
             )
             job.state = "retry_wait" if should_retry else "failed"
             job.available_at = retry_at or now
@@ -264,21 +267,32 @@ def execute_youtube_enrichment(
     jobs = _claim(command, session_factory)
     if not jobs:
         return
-    api_key = settings.youtube_api_key.get_secret_value() if settings.youtube_api_key else None
-    if not api_key:
+    try:
+        api_key = settings.youtube_api_key.get_secret_value() if settings.youtube_api_key else None
+        if not api_key:
+            _record_error(
+                command,
+                YouTubeClientError(None, "youtube_api_key_missing"),
+                session_factory,
+            )
+            return
+        client = client or YouTubeClient(
+            api_key=api_key,
+            timeout_seconds=settings.youtube_request_timeout_seconds,
+        )
+        try:
+            response = client.fetch_videos([item.video_id for item in command.items])
+        except YouTubeClientError as error:
+            _record_error(command, error, session_factory)
+            return
+        _apply_success(command, response, session_factory)
+    except Exception:
+        logger.exception(
+            "Unexpected YouTube enrichment worker error",
+            extra={"dispatch_id": str(command.dispatch_id)},
+        )
         _record_error(
             command,
-            YouTubeClientError(None, "youtube_api_key_missing"),
+            YouTubeClientError(500, WORKER_UNEXPECTED_ERROR),
             session_factory,
         )
-        return
-    client = client or YouTubeClient(
-        api_key=api_key,
-        timeout_seconds=settings.youtube_request_timeout_seconds,
-    )
-    try:
-        response = client.fetch_videos([item.video_id for item in command.items])
-    except YouTubeClientError as error:
-        _record_error(command, error, session_factory)
-        return
-    _apply_success(command, response, session_factory)

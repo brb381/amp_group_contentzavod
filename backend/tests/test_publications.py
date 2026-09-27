@@ -13,6 +13,7 @@ from app.auth.security import hash_password, utc_now
 from app.youtube_config import YouTubeWorkerSettings
 from app.content.models import (
     Publication,
+    PublicationAvailability,
     PublicationEnrichmentStatus,
     PublicationHistory,
     PublicationStatus,
@@ -43,6 +44,7 @@ from app.tiktok_config import TikTokWorkerSettings
 from app.contracts import VKEnrichmentCommand, VKViewCollectionCommand
 from app.scheduling.vk import dispatch_vk_enrichment, dispatch_vk_view
 from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
+from app.vk.client import VKClientError
 from app.vk.schemas import VKOEmbedResponse, VKPublicVideo
 from app.vk.service import execute_vk_enrichment
 from app.vk.views import execute_vk_view_collection
@@ -452,6 +454,12 @@ def test_moderation_queue_is_protected_filtered_and_contains_context(client):
         f"?blogger={blogger.email}&brand=AMP&product=Model%20X"
         f"&dateFrom={date.today().isoformat()}&platform=youtube"
     )
+    availability_filtered = client.get(
+        "/api/v1/moderation/publications?availability=unknown&allStatuses=true"
+    )
+    availability_mismatch = client.get(
+        "/api/v1/moderation/publications?availability=available&allStatuses=true"
+    )
     mismatched = client.get(
         "/api/v1/moderation/publications?blogger=unknown@example.com&platform=youtube"
     )
@@ -464,6 +472,8 @@ def test_moderation_queue_is_protected_filtered_and_contains_context(client):
     assert filtered.status_code == 200
     assert filtered.json()["total_items"] == 1
     assert mismatched.json()["total_items"] == 0
+    assert availability_filtered.json()["total_items"] == 1
+    assert availability_mismatch.json()["total_items"] == 0
     assert detail.status_code == 200
     assert detail.json()["social_account"]["id"] == str(account.id)
     assert detail.json()["card"]["publication_summary"]["pending_review"] == 1
@@ -964,6 +974,263 @@ def test_tiktok_429_blocks_new_dispatch_until_retry_after(client):
         session_factory=session_factory, task_producer=producer
     ) is False
     assert len(producer.messages) == 1
+
+
+VIEW_COLLECTION_CASES = (
+    (
+        Platform.YOUTUBE,
+        'https://youtu.be/missingYT01',
+        dispatch_youtube_view_batch,
+        YouTubeViewCollectionJob,
+    ),
+    (
+        Platform.TIKTOK,
+        'https://www.tiktok.com/@creator/video/750000000000000099',
+        dispatch_tiktok_view,
+        TikTokViewCollectionJob,
+    ),
+    (
+        Platform.VK,
+        'https://vk.com/video-42_999',
+        dispatch_vk_view,
+        VKViewCollectionJob,
+    ),
+    (
+        Platform.RUTUBE,
+        'https://rutube.ru/video/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/',
+        dispatch_rutube_view,
+        RutubeViewCollectionJob,
+    ),
+)
+
+
+def _approved_publication_with_metadata(client, platform, url):
+    suffix = platform.value
+    blogger = create_blogger(client, f'view-unavailable-{suffix}@example.com')
+    account = create_social_account(client, blogger.id, platform=platform)
+    login(client, blogger.email)
+    card = create_card(client, title=f'Unavailable {suffix}')
+    publication = create_publication(client, card['id'], account.id, url)
+    with client.app.state.test_session() as db:
+        stored = db.get(Publication, uuid.UUID(publication['id']))
+        stored.status = PublicationStatus.APPROVED
+        stored.availability = PublicationAvailability.AVAILABLE
+        stored.external_title = 'Stale title'
+        stored.external_author_id = 'stale-author-id'
+        stored.external_author_name = 'Stale author'
+        stored.external_published_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+        stored.external_duration_seconds = 123
+        stored.external_thumbnail_url = 'https://img.example/stale.jpg'
+        stored.external_etag = 'stale-etag'
+        stored.enriched_at = datetime(2026, 9, 2, tzinfo=timezone.utc)
+        db.commit()
+    return publication
+
+
+@pytest.mark.parametrize(
+    ('platform', 'url', 'dispatch', 'job_model'),
+    VIEW_COLLECTION_CASES,
+)
+def test_view_scheduler_skips_unavailable_publications(
+    client, platform, url, dispatch, job_model
+):
+    publication = _approved_publication_with_metadata(client, platform, url)
+    session_factory = client.app.state.test_session
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication['id']))
+        stored.availability = PublicationAvailability.UNAVAILABLE
+        db.commit()
+
+    producer = CapturingProducer()
+    assert dispatch(
+        now=datetime(2026, 9, 26, 10, 0, tzinfo=timezone.utc),
+        session_factory=session_factory,
+        task_producer=producer,
+    ) is False
+    assert producer.messages == []
+    with session_factory() as db:
+        assert db.scalar(select(func.count()).select_from(job_model)) == 0
+
+
+@pytest.mark.parametrize(
+    ('platform', 'url', 'dispatch', 'job_model', 'expected_error'),
+    (
+        (*VIEW_COLLECTION_CASES[0], 'video_unavailable'),
+        (*VIEW_COLLECTION_CASES[1], 'tiktok_not_found'),
+        (*VIEW_COLLECTION_CASES[2], 'vk_not_found'),
+        (*VIEW_COLLECTION_CASES[3], 'rutube_not_found'),
+    ),
+)
+def test_view_not_found_clears_metadata_and_stops_future_collection(
+    client, platform, url, dispatch, job_model, expected_error
+):
+    publication = _approved_publication_with_metadata(client, platform, url)
+    session_factory = client.app.state.test_session
+    producer = CapturingProducer()
+    collection_time = datetime(2026, 9, 26, 10, 0, tzinfo=timezone.utc)
+    assert dispatch(
+        now=collection_time,
+        session_factory=session_factory,
+        task_producer=producer,
+    ) is True
+    payload = producer.messages[0]['args'][0]
+
+    if platform == Platform.YOUTUBE:
+        command = YouTubeViewCollectionCommand.model_validate(payload)
+
+        class MissingClient:
+            def fetch_view_counts(self, video_ids):
+                return YouTubeViewCountsResponse.model_validate({'items': []})
+
+        settings = YouTubeWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+            youtube_api_key=SecretStr('test-key'),
+        )
+        execute_youtube_view_collection(
+            command, settings, session_factory, client=MissingClient()
+        )
+    elif platform == Platform.TIKTOK:
+        command = TikTokViewCollectionCommand.model_validate(payload)
+
+        class MissingClient:
+            def fetch_public_stats(self, source_url):
+                raise TikTokClientError(404, 'tiktok_not_found')
+
+        settings = TikTokWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+        )
+        execute_tiktok_view_collection(
+            command, settings, session_factory, client=MissingClient()
+        )
+    elif platform == Platform.VK:
+        command = VKViewCollectionCommand.model_validate(payload)
+
+        class MissingClient:
+            def fetch_public_stats(self, source_url):
+                raise VKClientError(404, 'vk_not_found')
+
+        settings = VKWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+        )
+        execute_vk_view_collection(
+            command, settings, session_factory, client=MissingClient()
+        )
+    else:
+        command = RutubeViewCollectionCommand.model_validate(payload)
+
+        class MissingClient:
+            def fetch_video(self, external_id):
+                raise RutubeClientError(404, 'rutube_not_found')
+
+        settings = RutubeWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+        )
+        execute_rutube_view_collection(
+            command, settings, session_factory, client=MissingClient()
+        )
+
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication['id']))
+        job = db.scalar(select(job_model))
+        assert stored.status == PublicationStatus.APPROVED
+        assert stored.availability == PublicationAvailability.UNAVAILABLE
+        assert stored.external_title is None
+        assert stored.external_author_id is None
+        assert stored.external_author_name is None
+        assert stored.external_published_at is None
+        assert stored.external_duration_seconds is None
+        assert stored.external_thumbnail_url is None
+        assert stored.external_etag is None
+        assert stored.enriched_at is not None
+        assert job.state == 'failed'
+        assert job.last_error_code == expected_error
+
+    next_producer = CapturingProducer()
+    assert dispatch(
+        now=collection_time + timedelta(hours=2),
+        session_factory=session_factory,
+        task_producer=next_producer,
+    ) is False
+    assert next_producer.messages == []
+    with session_factory() as db:
+        assert db.scalar(select(func.count()).select_from(job_model)) == 1
+
+
+@pytest.mark.parametrize(
+    ('platform', 'url', 'dispatch', 'job_model'),
+    VIEW_COLLECTION_CASES,
+)
+def test_unexpected_view_worker_error_releases_job_for_retry(
+    client, platform, url, dispatch, job_model
+):
+    _approved_publication_with_metadata(client, platform, url)
+    session_factory = client.app.state.test_session
+    producer = CapturingProducer()
+    assert dispatch(
+        now=datetime(2026, 9, 26, 10, 0, tzinfo=timezone.utc),
+        session_factory=session_factory,
+        task_producer=producer,
+    ) is True
+    payload = producer.messages[0]['args'][0]
+
+    class UnexpectedClient:
+        def fetch_view_counts(self, video_ids):
+            raise RuntimeError('unexpected client failure')
+
+        def fetch_public_stats(self, source_url):
+            raise RuntimeError('unexpected client failure')
+
+        def fetch_video(self, external_id):
+            raise RuntimeError('unexpected client failure')
+
+    if platform == Platform.YOUTUBE:
+        command = YouTubeViewCollectionCommand.model_validate(payload)
+        settings = YouTubeWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+            youtube_api_key=SecretStr('test-key'),
+        )
+        execute_youtube_view_collection(
+            command, settings, session_factory, client=UnexpectedClient()
+        )
+    elif platform == Platform.TIKTOK:
+        command = TikTokViewCollectionCommand.model_validate(payload)
+        settings = TikTokWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+        )
+        execute_tiktok_view_collection(
+            command, settings, session_factory, client=UnexpectedClient()
+        )
+    elif platform == Platform.VK:
+        command = VKViewCollectionCommand.model_validate(payload)
+        settings = VKWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+        )
+        execute_vk_view_collection(
+            command, settings, session_factory, client=UnexpectedClient()
+        )
+    else:
+        command = RutubeViewCollectionCommand.model_validate(payload)
+        settings = RutubeWorkerSettings(
+            database_url='sqlite+pysqlite:///:memory:',
+            redis_url='redis://localhost:6379/0',
+        )
+        execute_rutube_view_collection(
+            command, settings, session_factory, client=UnexpectedClient()
+        )
+
+    with session_factory() as db:
+        job = db.scalar(select(job_model))
+        assert job.state == 'retry_wait'
+        assert job.last_error_code == 'worker_unexpected_error'
+        assert job.dispatch_id is None
+        assert job.lease_until is None
 
 
 def test_tiktok_public_counter_is_saved_as_pending_approximate_reading(client):

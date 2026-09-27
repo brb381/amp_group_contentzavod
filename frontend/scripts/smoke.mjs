@@ -135,6 +135,23 @@ try {
       console.log('E2E smoke passed: moderator empty queue state')
     }
   } else if (email.includes('admin')) {
+    await page.getByRole('heading', { name: 'Рабочий стол' }).waitFor()
+    const queueRow = page.locator('.queue-panel tbody tr').first()
+    if (await queueRow.count()) {
+      await queueRow.click()
+      await page.waitForFunction(() => window.location.hash !== '#overview')
+      if ((await page.locator('main h1').first().innerText()) === 'Рабочий стол') throw new Error('Admin queue did not open its task page')
+    }
+    await openNav()
+    await page.getByRole('button', { name: 'Блогеры', exact: true }).click()
+    const bloggerRow = page.locator('tbody tr').first()
+    if (await bloggerRow.count()) {
+      await bloggerRow.click()
+      await page.locator('.work-drawer--blogger').waitFor()
+      await page.getByRole('tab', { name: /Публикации/ }).click()
+      if ((await page.locator('.work-drawer--blogger').innerText()).includes('Данные обновлены')) throw new Error('Redundant collection status is exposed in blogger card')
+      await page.getByTitle('Закрыть').click()
+    }
     await openNav()
     await page.getByRole('button', { name: 'Аналитика' }).click()
     await page.getByRole('heading', { name: 'Аналитика' }).waitFor()
