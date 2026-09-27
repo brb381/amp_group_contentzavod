@@ -29,7 +29,7 @@ import { EarningsDrawer } from './EarningsDrawer'
 import { availabilityLabel, enrichmentLabel, platformConfig, platformIds, readingSourceLabel, visibleRiskFlags } from './platforms'
 import {
   documentLabel, exportFormatLabel, exportTypeLabel, integrationErrorLabel, recipientLabel, riskFlagLabel,
-  roleLabel, roleLabels, securityActionLabel, securityResultLabel, statusLabel, statusLabels,
+  roleLabel, roleLabels, securityActionLabel, securityObjectLabel, securityResultLabel, statusLabel, statusLabels,
   supportCategoryLabel,
 } from './labels'
 
@@ -235,7 +235,7 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
   }))
   if (page === 'catalog') return items.map((item) => row({ id: item.id, rawId: item.id, title: item.publication_name, meta: item.brand + ' · ' + item.sku, status: item.is_active ? 'Активен' : 'Архив', rawStatus: item.is_active ? 'active' : 'inactive', tone: item.is_active ? 'green' : 'gray', date: date(item.updated_at), value: item.required_hashtags?.length + ' хэштегов', initials: String(item.brand).slice(0, 2).toUpperCase() }))
   if (page === 'billing') return items.map((item) => row({ id: item.id, rawId: item.id, title: 'Период ' + date(item.period), meta: numeric(item.total_views) + ' просмотров', status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status), date: date(item.updated_at), value: rubles(item.total_payable_kopecks), initials: '₽' }))
-  if (page === 'security') return items.map((item) => row({ id: item.id, rawId: item.id, title: securityActionLabel(item.action), meta: roleLabel(item.actor_role), status: securityResultLabel(item.result), rawStatus: item.result, tone: item.result === 'success' ? 'green' : 'red', date: date(item.occurred_at), value: 'Событие', initials: item.result === 'success' ? 'OK' : '!' }))
+  if (page === 'security') return items.map((item) => row({ id: item.id, rawId: item.id, title: securityActionLabel(item.action), meta: item.actor_email || (item.actor_role === 'lifecycle_worker' ? 'Служба контроля активности' : item.actor_role ? roleLabel(item.actor_role) : 'Системный процесс'), status: securityResultLabel(item.result), rawStatus: item.result, tone: item.result === 'success' ? 'green' : 'red', date: date(item.occurred_at), value: item.object_type ? securityObjectLabel(item.object_type) : 'Без отдельного объекта', initials: item.result === 'success' ? 'OK' : '!' }))
   if (page === 'legal') return items.map((item) => row({ id: item.id, rawId: item.id, title: item.title, meta: documentLabel(item.document_type) + ' · версия ' + item.version, status: item.is_current ? 'Действует' : 'Архив', rawStatus: item.is_current ? 'active' : 'archived', tone: item.is_current ? 'green' : 'gray', date: date(item.published_at), value: 'Редакция ' + item.revision, initials: 'Д' }))
   return []
 }
@@ -677,4 +677,3 @@ export function App() {
   if (!user || publicTokenFlow) return <AuthPortal backendError={backendError} retryBackend={check} signedIn={(value) => { setBackendError(''); setUser(value); window.history.replaceState(null, '', window.location.pathname) }} />
   return <Cabinet user={user} signedOut={() => setUser(null)} />
 }
-

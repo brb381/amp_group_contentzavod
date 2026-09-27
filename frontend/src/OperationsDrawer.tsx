@@ -4,12 +4,54 @@ import {
   ApiError, Role, createBillingRate, loadCalculationPeriod, loadLegalDocument,
   loadProduct, loadSecurityEvent, publishLegalDocument, runCalculationPeriod, saveProduct,
 } from './api'
-import { roleLabel, securityActionLabel, securityResultLabel, statusLabel } from './labels'
+import { roleLabel, securityActionLabel, securityObjectLabel, securityReasonLabel, securityResultLabel, statusLabel } from './labels'
 
 type Json = Record<string, any>
 export type OperationKind = 'product' | 'period' | 'rate' | 'security' | 'legal'
 const rubles = (value = 0) => new Intl.NumberFormat('ru-RU').format(Math.round(value / 100)) + ' ₽'
 const numeric = (value = 0) => new Intl.NumberFormat('ru-RU').format(value)
+
+const securityFieldLabels: Record<string, string> = {
+  avatar: 'аватар', full_name: 'ФИО', display_name: 'публичное имя', phone: 'телефон',
+  telegram: 'Telegram', city_country: 'город и страна', content_topics: 'тематика контента',
+  recipient_status: 'статус получателя', url: 'ссылка', follower_count: 'число подписчиков',
+  title: 'название', product: 'товар', status: 'статус', role: 'роль', is_active: 'активность',
+  required_hashtags: 'обязательные хештеги', content_hint: 'подсказка автору', marketplace_links: 'ссылки магазинов',
+}
+
+function securityActor(data: Json) {
+  if (data.actor_email) return data.actor_email
+  if (data.actor_role === 'lifecycle_worker') return 'Служба контроля активности'
+  return data.actor_role ? roleLabel(data.actor_role) : 'Системный процесс'
+}
+
+function securityActorRole(data: Json) {
+  if (data.actor_role === 'lifecycle_worker') return 'Системная служба'
+  return data.actor_role ? roleLabel(data.actor_role) : 'Автоматическое действие'
+}
+
+function securityFacts(data: Json) {
+  const metadata = data.event_metadata ?? {}
+  const facts: { label: string; value: string }[] = []
+  if (metadata.reason) facts.push({ label: 'Причина', value: securityReasonLabel(metadata.reason) })
+  if (metadata.decision) facts.push({ label: 'Решение', value: statusLabel(metadata.decision, String(metadata.decision)) })
+  if (metadata.from_status) facts.push({ label: 'Статус до', value: statusLabel(metadata.from_status, String(metadata.from_status)) })
+  if (metadata.to_status) facts.push({ label: 'Статус после', value: statusLabel(metadata.to_status, String(metadata.to_status)) })
+  if (metadata.previous_status) facts.push({ label: 'Предыдущий статус', value: statusLabel(metadata.previous_status, String(metadata.previous_status)) })
+  const changed = metadata.changed_fields ?? metadata.fields
+  if (Array.isArray(changed) && changed.length) facts.push({ label: 'Изменено', value: [...new Set(changed.map((field: string) => securityFieldLabels[field] ?? 'другие данные'))].join(', ') })
+  if (metadata.old_value !== undefined) facts.push({ label: 'Значение до', value: numeric(Number(metadata.old_value)) })
+  if (metadata.new_value !== undefined) facts.push({ label: 'Значение после', value: numeric(Number(metadata.new_value)) })
+  if (metadata.amount_kopecks !== undefined) facts.push({ label: 'Сумма', value: rubles(Number(metadata.amount_kopecks)) })
+  if (metadata.request_number) facts.push({ label: 'Номер заявки', value: String(metadata.request_number) })
+  if (metadata.period) facts.push({ label: 'Расчётный период', value: String(metadata.period) })
+  if (metadata.platform) facts.push({ label: 'Площадка', value: String(metadata.platform).toUpperCase() })
+  if (metadata.marketplace) facts.push({ label: 'Магазин', value: String(metadata.marketplace) })
+  if (metadata.version) facts.push({ label: 'Версия', value: String(metadata.version) })
+  if (metadata.publication_count !== undefined) facts.push({ label: 'Публикаций затронуто', value: numeric(Number(metadata.publication_count)) })
+  if (metadata.received_on) facts.push({ label: 'Дата получения', value: new Date(metadata.received_on).toLocaleDateString('ru-RU') })
+  return facts
+}
 
 function Field({ label, children, wide = false }: { label: string; children: ReactNode; wide?: boolean }) {
   return <label className={wide ? 'form-field form-field--wide' : 'form-field'}><span>{label}</span>{children}</label>
@@ -65,7 +107,7 @@ export function OperationsDrawer({ kind, id, role, close, changed }: { kind: Ope
     {kind === 'product' ? <section className="form-section"><h3><Package size={16} />Карточка товара</h3><fieldset className="form-grid" disabled={!editableProduct}><Field label="Бренд"><select name="brand" defaultValue={data?.brand ?? 'AMP'}><option>AMP</option><option>AirTone</option><option>CrioLight</option></select></Field><Field label="Артикул"><input name="sku" defaultValue={data?.sku ?? ''} required /></Field><Field label="Модель"><input name="model_name" defaultValue={data?.model_name ?? ''} required /></Field><Field label="Название для публикации"><input name="publication_name" defaultValue={data?.publication_name ?? ''} required /></Field><Field label="Обязательные хэштеги" wide><input name="hashtags" defaultValue={(data?.required_hashtags ?? []).join(', ')} placeholder="#amp, #обзор" required /></Field><Field label="Подсказка автору" wide><textarea name="content_hint" defaultValue={data?.content_hint ?? ''} rows={4} /></Field><Field label="Ссылки маркетплейсов" wide><textarea name="marketplace_links" defaultValue={(data?.marketplace_links ?? []).map((item: Json) => item.label + ' | ' + item.url).join('\n')} placeholder={'Ozon | https://...\nWildberries | https://...'} rows={4} /></Field><label className="check-field"><input name="is_active" type="checkbox" defaultChecked={data?.is_active ?? true} />Товар активен</label></fieldset>{data ? <div className="catalog-reference"><button type="button" onClick={() => void navigator.clipboard.writeText(data.publication_name)}><Copy size={14} />Название для публикации</button><button type="button" onClick={() => void navigator.clipboard.writeText(data.sku)}><Copy size={14} />Артикул</button><button type="button" onClick={() => void navigator.clipboard.writeText((data.required_hashtags ?? []).join(' '))}><Copy size={14} />Хэштеги</button>{(data.marketplace_links ?? []).map((item: Json) => <a key={item.url} href={item.url} target="_blank" rel="noreferrer"><ExternalLink size={14} />{item.label}</a>)}</div> : null}{!editableProduct ? <div className="inline-note">Для вашей роли каталог доступен только для чтения.</div> : null}</section> : null}
     {kind === 'rate' ? <section className="form-section"><h3><Calculator size={16} />Условия ставки</h3><div className="form-grid"><Field label="Копеек за просмотр"><input name="rate" type="number" min="1" max="1000000" required /></Field><Field label="Действует с месяца"><input name="period" type="month" required /></Field><Field label="Причина" wide><textarea name="reason" minLength={3} rows={4} required /></Field></div></section> : null}
     {kind === 'period' && data ? <><section className="operation-summary"><span><Calculator size={22} /></span><div><small>К выплате</small><strong>{rubles(data.total_payable_kopecks)}</strong></div><b>{statusLabel(data.status)}</b></section><section className="form-section"><h3>Итоги периода</h3><div className="export-details"><span><small>Просмотры</small>{numeric(data.total_views)}</span><span><small>Начислено</small>{rubles(data.total_amount_kopecks)}</span><span><small>Корректировки</small>{rubles(data.total_adjustment_kopecks)}</span><span><small>Публикаций</small>{data.accruals?.length ?? 0}</span></div>{data.accruals?.some((item: Json) => item.risk_flags?.length) ? <div className="payout-warning"><AlertTriangle size={16} /><span><b>Есть данные, требующие проверки</b>Проверьте начисления перед подтверждением.</span></div> : null}</section>{calculationReviewer && data.status !== 'confirmed' ? <section className="form-section"><h3><ShieldCheck size={16} />Команды</h3><div className="payout-actions"><button type="button" onClick={() => void periodCommand('recalculations')} disabled={pending}>Запросить пересчёт</button>{data.status === 'preliminary' ? <button type="button" onClick={() => void periodCommand('confirmations')} disabled={pending}>Подтвердить период</button> : null}</div></section> : null}</> : null}
-    {kind === 'security' && data ? <><section className="operation-summary"><span><ShieldCheck size={22} /></span><div><small>Действие</small><strong>{securityActionLabel(data.action)}</strong></div><b>{securityResultLabel(data.result)}</b></section><section className="form-section"><h3>Контекст запроса</h3><div className="export-details"><span><small>Время</small>{new Date(data.occurred_at).toLocaleString('ru-RU')}</span><span><small>Роль</small>{data.actor_role ? roleLabel(data.actor_role) : 'Система'}</span><span><small>IP-адрес</small>{data.ip_address || 'Не указан'}</span></div></section></> : null}
+    {kind === 'security' && data ? <><section className="operation-summary"><span><ShieldCheck size={22} /></span><div><small>Что произошло</small><strong>{securityActionLabel(data.action)}</strong></div><b>{securityResultLabel(data.result)}</b></section><section className="form-section"><h3>Содержание события</h3><div className="export-details"><span><small>Кто выполнил</small>{securityActor(data)}</span><span><small>Роль</small>{securityActorRole(data)}</span><span><small>Объект</small>{data.object_type ? securityObjectLabel(data.object_type) : 'Не связан с отдельным объектом'}</span>{data.object_id ? <span><small>Идентификатор объекта</small>{data.object_id}</span> : null}{securityFacts(data).map((fact) => <span key={fact.label}><small>{fact.label}</small>{fact.value}</span>)}</div></section><section className="form-section"><h3>Контекст запроса</h3><div className="export-details"><span><small>Время</small>{new Date(data.occurred_at).toLocaleString('ru-RU')}</span><span><small>IP-адрес</small>{data.ip_address || 'Не указан'}</span><span><small>Номер запроса</small>{data.request_id || 'Не указан'}</span></div></section></> : null}
     {kind === 'legal' ? id && data ? <section className="form-section"><h3><FileText size={16} />{data.title}</h3><div className="document-meta">Версия {data.version} · редакция {data.revision} · {data.is_current ? 'действующая' : 'архивная'}</div><pre className="document-content">{data.content_markdown}</pre></section> : <section className="form-section"><h3><FileText size={16} />Публикация документа</h3><div className="form-grid"><Field label="Тип"><select name="document_type" value={documentType} onChange={(event) => setDocumentType(event.target.value)}><option value="program_terms">Условия программы</option><option value="personal_data_consent">Согласие на обработку данных</option><option value="privacy_policy">Политика конфиденциальности</option></select></Field><Field label="Версия"><input name="version" pattern="[A-Za-z0-9._-]+" required /></Field><Field label="Название" wide><input name="title" minLength={3} required /></Field><Field label="Текст Markdown" wide><textarea name="content" minLength={20} rows={12} required /></Field><Field label="Описание изменений" wide><textarea name="change_summary" rows={3} /></Field><label className="check-field"><input name="requires_reacceptance" type="checkbox" disabled={documentType === 'privacy_policy'} />Требовать повторное принятие</label></div></section> : null}
     {error ? <div className="auth-error"><AlertTriangle size={16} />{error}</div> : null}<footer className="work-form__actions"><button type="button" className="button button--secondary" onClick={close}>Закрыть</button>{(kind === 'product' && editableProduct) || kind === 'rate' || (kind === 'legal' && !id) ? <button className="button button--primary" disabled={pending}>{pending ? <LoaderCircle className="spin" size={17} /> : <Save size={17} />}{pending ? 'Сохраняем' : 'Сохранить'}</button> : null}</footer>
   </form>}</aside></div>

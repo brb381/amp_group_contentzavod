@@ -11,6 +11,7 @@ class SecurityEventResponse(BaseModel):
     id: uuid.UUID
     occurred_at: datetime
     actor_user_id: uuid.UUID | None
+    actor_email: str | None = None
     actor_role: str | None
     action: str
     result: str

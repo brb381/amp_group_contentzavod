@@ -153,6 +153,17 @@ try {
       await page.getByTitle('Закрыть').click()
     }
     await openNav()
+    await page.getByRole('button', { name: 'Безопасность', exact: true }).click()
+    await page.getByRole('heading', { name: 'Безопасность' }).waitFor()
+    const securityRow = page.locator('tbody tr').first()
+    if (await securityRow.count()) {
+      if ((await securityRow.innerText()).includes('Системное действие')) throw new Error('Security event has no meaningful action label')
+      await securityRow.click()
+      await page.getByText('Что произошло', { exact: true }).waitFor()
+      await page.getByText('Кто выполнил', { exact: true }).waitFor()
+      await page.getByTitle('Закрыть').click()
+    }
+    await openNav()
     await page.getByRole('button', { name: 'Аналитика' }).click()
     await page.getByRole('heading', { name: 'Аналитика' }).waitFor()
     await page.locator('.analytics-filters').waitFor()

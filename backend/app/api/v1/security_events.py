@@ -19,6 +19,12 @@ router = APIRouter(prefix="/security-events", tags=["security events"])
 Administrator = Annotated[User, Depends(require_active_roles(Role.ADMIN))]
 
 
+def _response(event: SecurityEvent, actor_email: str | None = None) -> SecurityEventResponse:
+    return SecurityEventResponse.model_validate(event).model_copy(
+        update={'actor_email': actor_email}
+    )
+
+
 @router.get("", response_model=SecurityEventListResponse)
 def list_security_events(
     _: Administrator,
@@ -64,8 +70,12 @@ def list_security_events(
             .limit(page_size)
         )
     )
+    actor_ids = {event.actor_user_id for event in events if event.actor_user_id}
+    actor_emails = dict(
+        db.execute(select(User.id, User.email).where(User.id.in_(actor_ids))).all()
+    ) if actor_ids else {}
     return SecurityEventListResponse(
-        items=events,
+        items=[_response(event, actor_emails.get(event.actor_user_id)) for event in events],
         page=page,
         page_size=page_size,
         total_items=total,
@@ -76,8 +86,9 @@ def list_security_events(
 @router.get("/{event_id}", response_model=SecurityEventResponse)
 def get_security_event(
     event_id: uuid.UUID, _: Administrator, db: Session = Depends(get_db, scope="function")
-) -> SecurityEvent:
+) -> SecurityEventResponse:
     audit_event = db.get(SecurityEvent, event_id)
     if not audit_event:
         raise APIError(404, "SECURITY_EVENT_NOT_FOUND", "Security event was not found")
-    return audit_event
+    actor_email = db.scalar(select(User.email).where(User.id == audit_event.actor_user_id))
+    return _response(audit_event, actor_email)

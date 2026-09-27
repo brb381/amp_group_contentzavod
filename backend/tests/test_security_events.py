@@ -97,6 +97,11 @@ def test_security_events_api_is_admin_only_and_paginated(client):
     assert body["page_size"] == 1
     assert body["total_items"] == 1
     assert body["items"][0]["action"] == AuditAction.USER_REGISTERED
+    assert body['items'][0]['actor_email'] == 'audit-list@example.com'
+    event_id = body['items'][0]['id']
+    detail = client.get(f'/api/v1/security-events/{event_id}')
+    assert detail.status_code == 200
+    assert detail.json()['actor_email'] == 'audit-list@example.com'
 
 
 def test_business_change_and_audit_event_roll_back_together(client):

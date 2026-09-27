@@ -104,13 +104,96 @@ const integrationErrorLabels: Record<string, string> = {
 }
 
 const securityActionLabels: Record<string, string> = {
-  'auth.login_succeeded': 'Вход в аккаунт', 'auth.login_failed': 'Неудачная попытка входа',
-  'auth.logout': 'Выход из аккаунта', 'auth.password_changed': 'Пароль изменён',
+  'auth.user_registered': 'Пользователь зарегистрирован',
+  'auth.login_succeeded': 'Выполнен вход в аккаунт',
+  'auth.login_failed': 'Неудачная попытка входа',
+  'auth.logout_succeeded': 'Выполнен выход из аккаунта',
+  'auth.email_verification_requested': 'Запрошено подтверждение почты',
+  'auth.email_verified': 'Электронная почта подтверждена',
+  'auth.password_reset_requested': 'Запрошено восстановление пароля',
+  'auth.password_reset_completed': 'Пароль восстановлен',
+  'auth.session_refreshed': 'Сессия пользователя обновлена',
+  'auth.refresh_reuse_detected': 'Обнаружено повторное использование сессии',
+  'creator.profile_created': 'Создан профиль блогера',
+  'creator.profile_updated': 'Изменён профиль блогера',
+  'creator.profile_submitted': 'Профиль отправлен на проверку',
+  'moderation.profile_reviewed': 'Профиль блогера проверен',
+  'creator.social_account_created': 'Добавлена социальная площадка',
+  'creator.social_account_restored': 'Социальная площадка восстановлена',
+  'creator.social_account_updated': 'Социальная площадка изменена',
+  'creator.social_account_deleted': 'Социальная площадка удалена',
+  'moderation.social_account_reviewed': 'Социальная площадка проверена',
+  'admin.user_bootstrapped': 'Создан первый администратор',
+  'admin.user_role_changed': 'Изменена роль пользователя',
+  'admin.user_blocked': 'Пользователь заблокирован',
+  'admin.user_unblocked': 'Пользователь разблокирован',
+  'admin.program_settings_updated': 'Изменены настройки программы',
+  'catalog.product_created': 'Товар создан',
+  'catalog.product_updated': 'Товар изменён',
+  'catalog.product_hidden': 'Товар скрыт',
+  'catalog.product_restored': 'Товар восстановлен',
+  'content.video_card_created': 'Создана карточка ролика',
+  'content.video_card_updated': 'Карточка ролика изменена',
   'content.publication_created': 'Публикация добавлена',
-  'content.publication_updated': 'Публикация обновлена',
-  'content.publication_reviewed': 'Публикация проверена',
-  'payout.requested': 'Выплата запрошена', 'payout.approved': 'Выплата одобрена',
+  'content.publication_updated': 'Публикация изменена',
+  'content.publication_deleted': 'Публикация удалена',
+  'content.publication_submitted': 'Публикация отправлена на проверку',
+  'moderation.publication_reviewed': 'Публикация проверена',
+  'content.publication_deactivated': 'Публикация отключена',
+  'content.publication_promo_issued': 'Выдан промокод для публикации',
+  'readings.created': 'Добавлены показания просмотров',
+  'readings.updated': 'Показания просмотров изменены',
+  'moderation.view_reading_reviewed': 'Показания просмотров проверены',
+  'moderation.view_reading_corrected': 'Показания просмотров скорректированы',
+  'billing.rate_created': 'Создана ставка оплаты',
+  'billing.recalculation_requested': 'Запрошен перерасчёт периода',
+  'billing.period_confirmed': 'Расчётный период подтверждён',
+  'billing.accrual_corrected': 'Начисление скорректировано',
+  'payout.details_updated': 'Платёжные реквизиты изменены',
+  'payout.requested': 'Выплата запрошена',
+  'payout.review_started': 'Начата проверка выплаты',
+  'payout.approved': 'Выплата одобрена',
+  'payout.rejected': 'Выплата отклонена',
   'payout.paid': 'Выплата проведена',
+  'payout.receipt_recorded': 'Чек выплаты получен',
+  'payout.pii_anonymized': 'Платёжные данные обезличены',
+  'export.requested': 'Запрошена выгрузка данных',
+  'export.downloaded': 'Выгрузка данных скачана',
+  'support.ticket_created': 'Создано обращение',
+  'support.message_created': 'Добавлено сообщение в обращение',
+  'support.ticket_assigned': 'Назначен исполнитель обращения',
+  'support.status_changed': 'Изменён статус обращения',
+  'notification.template_updated': 'Изменён шаблон уведомления',
+  'lifecycle.account_suspended': 'Аккаунт приостановлен из-за неактивности',
+  'lifecycle.account_blocked': 'Аккаунт заблокирован из-за неактивности',
+  'lifecycle.recovery_approved': 'Восстановление аккаунта одобрено',
+  'lifecycle.recovery_rejected': 'Восстановление аккаунта отклонено',
+  'account.deletion_requested': 'Запрошено удаление аккаунта',
+  'account.deletion_cancelled': 'Удаление аккаунта отменено',
+  'account.deletion_completed': 'Аккаунт удалён',
+  'account.pii_anonymized': 'Личные данные обезличены',
+  'legal.document_published': 'Опубликован юридический документ',
+  'legal.document_accepted': 'Юридический документ принят пользователем',
+  'legal.personal_data_consent_withdrawn': 'Согласие на обработку данных отозвано',
+}
+
+const securityObjectLabels: Record<string, string> = {
+  user: 'Пользователь', refresh_session: 'Сессия пользователя', creator_profile: 'Профиль блогера',
+  social_account: 'Социальная площадка', product: 'Товар', video_card: 'Карточка ролика',
+  publication: 'Публикация', view_reading: 'Показания просмотров', rate_version: 'Ставка оплаты',
+  calculation_period: 'Расчётный период', accrual_correction: 'Корректировка начисления',
+  payout_details: 'Платёжные реквизиты', payout_request: 'Заявка на выплату', export_job: 'Выгрузка данных',
+  support_ticket: 'Обращение', notification_template_version: 'Шаблон уведомления',
+  legal_document: 'Юридический документ', legal_acceptance: 'Согласие пользователя',
+  program_settings: 'Настройки программы',
+}
+
+const securityReasonLabels: Record<string, string> = {
+  duplicate_email: 'Пользователь с такой почтой уже существует',
+  invalid_or_expired: 'Ссылка недействительна или устарела', user_missing: 'Пользователь не найден',
+  token_already_used: 'Ссылка уже была использована', invalid_credentials: 'Указана неверная почта или пароль',
+  account_unavailable: 'Аккаунт недоступен', invalid_token: 'Сессия недействительна',
+  expired_token: 'Срок действия сессии истёк',
 }
 
 const securityResultLabels: Record<string, string> = {
@@ -165,7 +248,13 @@ export const payoutEventLabel = (value: unknown) => label(payoutEventLabels, val
 export const profileEventLabel = (value: unknown) => label(profileEventLabels, value, 'Данные профиля изменены')
 export const readingEventLabel = (value: unknown) => label(readingEventLabels, value, 'Показание изменено')
 export const integrationErrorLabel = (value: unknown) => label(integrationErrorLabels, value, 'Не удалось обновить данные')
-export const securityActionLabel = (value: unknown) => label(securityActionLabels, value, 'Системное действие')
+export const securityActionLabel = (value: unknown) => label(securityActionLabels, value, 'Другое событие безопасности')
+export const securityObjectLabel = (value: unknown) => label(securityObjectLabels, value, 'Объект системы')
+export const securityReasonLabel = (value: unknown) => {
+  if (typeof value !== 'string' || !value.trim()) return 'Причина не указана'
+  if (securityReasonLabels[value]) return securityReasonLabels[value]
+  return /^[a-z0-9_]+$/i.test(value) ? 'Причина зафиксирована системой' : value
+}
 export const securityResultLabel = (value: unknown) => label(securityResultLabels, value, 'Результат не определён')
 export const lifecycleActivityLabel = (value: unknown) => label(lifecycleActivityLabels, value, 'Действие в личном кабинете')
 export const lifecycleTransitionLabel = (value: unknown) => label(lifecycleTransitionLabels, value, 'Изменение статуса аккаунта')
