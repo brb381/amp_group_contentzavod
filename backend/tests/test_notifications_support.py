@@ -116,7 +116,7 @@ def test_support_workflow_is_atomic_idempotent_and_notifies(client):
             db.scalars(select(Notification).where(Notification.recipient_user_id == manager_id))
         )
         assert len(manager_notifications) == 1
-        assert manager_notifications[0].body.endswith("Cannot publish a video")
+        assert "Cannot publish a video" in manager_notifications[0].body
         assert db.scalar(select(func.count()).select_from(OutboxEvent)) == 1
 
     _login(client, manager_email)

@@ -178,6 +178,10 @@ try {
     await page.locator('.drawer-loading').waitFor({ state: 'hidden' })
     await page.locator('.account-nav button').filter({ hasText: 'Уведомления' }).click()
     await page.getByRole('heading', { name: 'Шаблоны уведомлений' }).waitFor()
+    const templateOptions = await page.locator('.account-content select option').allTextContents()
+    if (!templateOptions.length || templateOptions.some((item) => /\b(Account|Publication|Payout|Support|Ticket|Calculation|Registration)\b/i.test(item))) {
+      throw new Error('Inactive English notification template is exposed: ' + templateOptions.join(', '))
+    }
     console.log('E2E smoke passed: admin analytics, filters and notification templates')
   } else {
     await openNav()

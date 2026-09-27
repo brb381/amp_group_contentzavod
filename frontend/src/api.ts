@@ -300,7 +300,7 @@ export function markAllNotificationsRead() {
 }
 
 export function listNotificationTemplates() {
-  return apiRequest<JsonObject>('/admin/notification-templates?includeInactive=true')
+  return apiRequest<JsonObject>('/admin/notification-templates?includeInactive=false')
 }
 
 export function createNotificationTemplateVersion(code: string, channel: string, payload: JsonObject) {
