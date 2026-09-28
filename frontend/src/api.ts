@@ -166,9 +166,12 @@ export function loadPage(role: Role, page: PageId, pageNumber = 1, filters: Page
     return apiRequest(`/moderation/publications?${params.toString()}`)
   }
   if (page === 'readings') {
+    const params = new URLSearchParams(pagination)
+    for (const [name, value] of Object.entries(filters)) if (value) params.set(name, value)
+    if (role !== 'blogger' && !filters.status) params.set('allStatuses', 'true')
     return role === 'blogger'
-      ? apiRequest(`/me/view-readings?${pagination}`)
-      : apiRequest(`/moderation/view-readings?${pagination}`)
+      ? apiRequest(`/me/view-readings?${params.toString()}`)
+      : apiRequest(`/moderation/view-readings?${params.toString()}`)
   }
   if (page === 'finance') {
     if (role !== 'blogger') return apiRequest(`/staff/payout-requests?${pagination}`)

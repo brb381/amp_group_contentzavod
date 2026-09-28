@@ -11,6 +11,7 @@ from app.auth.models import Role, User
 from app.config import Settings, get_settings
 from app.database.session import get_db
 from app.program.service import suspicious_growth_threshold
+from app.platforms import Platform
 from app.readings.models import ReadingStatus
 from app.readings.schemas import (
     ReadingCorrectionRequest,
@@ -92,6 +93,8 @@ def patch_manual_reading(
 def get_my_view_readings(
     user: CurrentUser,
     publication_id: uuid.UUID | None = Query(default=None, alias="publicationId"),
+    reading_status: ReadingStatus | None = Query(default=None, alias="status"),
+    platform: Platform | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
     db: Session = Depends(get_db, scope="function"),
@@ -100,6 +103,8 @@ def get_my_view_readings(
         db,
         actor=user,
         publication_id=publication_id,
+        status=reading_status,
+        platform=platform,
         page=page,
         page_size=page_size,
     )
@@ -112,6 +117,8 @@ def get_view_reading_queue(
         default=ReadingStatus.PENDING, alias="status"
     ),
     period: date | None = Query(default=None),
+    platform: Platform | None = Query(default=None),
+    all_statuses: bool = Query(default=False, alias="allStatuses"),
     suspicious_only: bool = Query(default=False, alias="isSuspicious"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, alias="pageSize", ge=1, le=100),
@@ -119,8 +126,9 @@ def get_view_reading_queue(
 ) -> ViewReadingListResponse:
     return list_readings_for_review(
         db,
-        status=reading_status,
+        status=None if all_statuses else reading_status,
         period=period,
+        platform=platform,
         suspicious_only=suspicious_only,
         page=page,
         page_size=page_size,

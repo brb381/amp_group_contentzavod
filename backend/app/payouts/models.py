@@ -158,6 +158,11 @@ class PayoutRequest(Base):
             name="ck_payout_requests_paid_status",
         ),
         CheckConstraint(
+            "status != 'paid' OR "
+            "(payment_reference IS NOT NULL AND length(trim(payment_reference)) > 0)",
+            name="ck_payout_requests_paid_reference",
+        ),
+        CheckConstraint(
             "((rejected_at IS NULL AND rejected_by_user_id IS NULL AND rejection_reason IS NULL) "
             "OR (rejected_at IS NOT NULL AND rejected_by_user_id IS NOT NULL AND "
             "rejection_reason IS NOT NULL AND length(trim(rejection_reason)) > 0))",

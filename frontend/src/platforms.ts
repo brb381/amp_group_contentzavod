@@ -12,8 +12,8 @@ export const platforms: Record<PlatformId, PlatformConfig> = {
   youtube: { label: 'YouTube', shortLabel: 'YT', accountPlaceholder: 'https://youtube.com/@channel', publicationPlaceholder: 'https://youtube.com/shorts/...', automaticReadings: true },
   vk: { label: 'VK', shortLabel: 'VK', accountPlaceholder: 'https://vk.com/author', publicationPlaceholder: 'https://vk.com/video-1_...', automaticReadings: true },
   tiktok: { label: 'TikTok', shortLabel: 'TT', accountPlaceholder: 'https://tiktok.com/@author', publicationPlaceholder: 'https://tiktok.com/@author/video/...', automaticReadings: true },
-  instagram: { label: 'Instagram', shortLabel: 'IG', accountPlaceholder: 'https://instagram.com/author', publicationPlaceholder: 'https://instagram.com/reel/...', automaticReadings: false },
-  dzen: { label: 'Дзен', shortLabel: 'ДЗ', accountPlaceholder: 'https://dzen.ru/author', publicationPlaceholder: 'https://dzen.ru/video/watch/...', automaticReadings: false },
+  instagram: { label: 'Instagram', shortLabel: 'IG', accountPlaceholder: 'https://instagram.com/author', publicationPlaceholder: 'https://instagram.com/reel/...', automaticReadings: true },
+  dzen: { label: 'Дзен', shortLabel: 'ДЗ', accountPlaceholder: 'https://dzen.ru/author', publicationPlaceholder: 'https://dzen.ru/video/watch/...', automaticReadings: true },
   rutube: { label: 'RUTUBE', shortLabel: 'RT', accountPlaceholder: 'https://rutube.ru/channel/...', publicationPlaceholder: 'https://rutube.ru/video/...', automaticReadings: true },
 }
 
@@ -39,6 +39,7 @@ export const availabilityLabels: Record<string, string> = {
 export const readingSourceLabels: Record<string, string> = {
   manual: 'Внесено вручную', youtube_api: 'YouTube', tiktok_public: 'TikTok',
   vk_public: 'VK', rutube_public: 'RUTUBE',
+  instagram_public: 'Instagram', dzen_public: 'Дзен',
 }
 
 export const enrichmentLabel = (value: unknown) =>

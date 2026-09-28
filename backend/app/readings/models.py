@@ -34,6 +34,8 @@ class ReadingSource(str, enum.Enum):
     TIKTOK_PUBLIC = "tiktok_public"
     VK_PUBLIC = "vk_public"
     RUTUBE_PUBLIC = "rutube_public"
+    INSTAGRAM_PUBLIC = "instagram_public"
+    DZEN_PUBLIC = "dzen_public"
 
 
 class ReadingStatus(str, enum.Enum):

@@ -1,0 +1,1 @@
+"""Instagram publication enrichment boundary."""

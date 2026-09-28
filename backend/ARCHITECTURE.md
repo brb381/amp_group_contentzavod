@@ -14,7 +14,7 @@ React client -> FastAPI -> PostgreSQL
                          v
                     scheduler -> Redis/Celery -> email worker -> SMTP
                               -> Redis/Celery -> YouTube worker -> YouTube API
-                              -> Redis/Celery -> platform worker -> TikTok/VK/RUTUBE public API
+                              -> Redis/Celery -> platform worker -> public platform page/API
                               -> Redis/Celery -> calculation worker -> PostgreSQL
                               -> Redis/Celery -> export worker -> S3/MinIO
 host scheduler -> creator retention command -> PostgreSQL
@@ -25,7 +25,7 @@ host scheduler -> creator retention command -> PostgreSQL
   error boundary, so one provider cannot stop unrelated work.
 - Email worker only claims and sends a prepared email command.
 - YouTube worker only claims a prepared batch, calls YouTube and records the outcome.
-- TikTok, VK and RUTUBE workers each claim one prepared platform command, call only
+- TikTok, VK, RUTUBE, Instagram and Dzen workers each claim one prepared command, call only
   their own public provider endpoint and record the outcome.
 - Calculation worker only claims one prepared closed-period job and writes its snapshot.
 - Export worker reads one bounded report snapshot, generates CSV/XLSX and uploads it.
@@ -116,6 +116,19 @@ publication after the configured Moscow hour. The public `hits` counter is store
 `rutube_public` with `approximate_public_counter`, remains pending for staff review
 and cannot enter billing until accepted. A provider `429`, `403`, server error or
 transport failure writes the retry boundary to PostgreSQL; Celery itself does not retry.
+
+### Instagram and Dzen
+
+Instagram and Dzen use separate queues, workers, job tables and database roles. The API
+validates that the submitted URL belongs to the selected platform, then creates an
+enrichment job. After moderation, the scheduler creates one view job per two-hour slot.
+
+Both workers read only the public publication page and validate the embedded structured
+data before storing metadata or a counter. They do not share credentials and do not call
+each other. Public counters use the platform-specific public reading source and the
+internal approximate-counter flag, and remain pending for staff review. A removed or
+private publication becomes unavailable; rate limits and temporary provider failures
+block only that provider until the recorded retry time.
 
 ### View readings
 

@@ -318,7 +318,7 @@ def create_my_ticket(
         created_at=now,
     )
     db.add(ticket)
-    db.flush([ticket])
+    db.flush()
     db.add_all([message, event])
     db.flush()
 

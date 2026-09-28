@@ -1,3 +1,4 @@
+import smtplib
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 
@@ -10,12 +11,33 @@ from app.smtp import send_smtp_message
 from app.outbox.models import OutboxEvent
 
 
+MAX_EMAIL_DELIVERY_ATTEMPTS = 5
+
+
 def next_retry_at(now: datetime, attempt_count: int) -> datetime:
     return now + timedelta(minutes=min(30, max(1, attempt_count)))
 
 
 def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
+def _permanent_delivery_error(error: Exception) -> str | None:
+    if isinstance(error, smtplib.SMTPRecipientsRefused):
+        response_codes = [
+            int(response[0])
+            for response in error.recipients.values()
+            if response and isinstance(response[0], int)
+        ]
+        if response_codes and all(code >= 500 for code in response_codes):
+            return f"smtp_recipients_refused_{min(response_codes)}"
+    if isinstance(error, smtplib.SMTPResponseException):
+        response_code = int(error.smtp_code)
+        if response_code >= 500:
+            return f"smtp_permanent_{response_code}"
+    if isinstance(error, smtplib.SMTPNotSupportedError):
+        return "smtp_not_supported"
+    return None
 
 
 def send_email(command: EmailDeliveryCommand, settings: EmailWorkerSettings) -> None:
@@ -77,6 +99,7 @@ def execute_email_delivery(
     try:
         sender(command)
     except Exception as error:
+        permanent_error = _permanent_delivery_error(error)
         db = session_factory()
         try:
             event = db.get(OutboxEvent, command.event_id)
@@ -85,11 +108,15 @@ def execute_email_delivery(
                 and event.state == "delivering"
                 and event.dispatch_id == command.dispatch_id
             ):
-                event.state = "pending"
+                attempts_exhausted = event.attempt_count >= MAX_EMAIL_DELIVERY_ATTEMPTS
+                event.state = "failed" if permanent_error or attempts_exhausted else "pending"
                 event.processing_until = None
                 event.dispatch_id = None
-                event.available_at = next_retry_at(utc_now(), event.attempt_count)
-                event.last_error = type(error).__name__
+                if event.state == "failed":
+                    event.failed_at = utc_now()
+                else:
+                    event.available_at = next_retry_at(utc_now(), event.attempt_count)
+                event.last_error = permanent_error or type(error).__name__
                 db.commit()
         finally:
             db.close()

@@ -28,7 +28,7 @@ import { AnalyticsPage } from './AnalyticsPage'
 import { EarningsDrawer } from './EarningsDrawer'
 import { availabilityLabel, enrichmentLabel, platformConfig, platformIds, readingSourceLabel, visibleRiskFlags } from './platforms'
 import {
-  documentLabel, exportFormatLabel, exportTypeLabel, integrationErrorLabel, recipientLabel, riskFlagLabel,
+  documentLabel, exportFormatLabel, exportJobStatusLabel, exportTypeLabel, integrationErrorLabel, recipientLabel, riskFlagLabel,
   roleLabel, roleLabels, securityActionLabel, securityObjectLabel, securityResultLabel, statusLabel, statusLabels,
   supportCategoryLabel,
 } from './labels'
@@ -93,6 +93,8 @@ const queueLabels: Record<string, string> = {
   youtube_enrichment_errors: 'Ошибки метаданных YouTube', youtube_view_errors: 'Ошибки просмотров YouTube',
   tiktok_enrichment_errors: 'Ошибки метаданных TikTok', tiktok_view_errors: 'Ошибки просмотров TikTok',
   vk_enrichment_errors: 'Ошибки метаданных VK', vk_view_errors: 'Ошибки просмотров VK',
+  instagram_enrichment_errors: 'Ошибки метаданных Instagram', instagram_view_errors: 'Ошибки просмотров Instagram',
+  dzen_enrichment_errors: 'Ошибки метаданных Дзена', dzen_view_errors: 'Ошибки просмотров Дзена',
 }
 
 function queueTarget(code: string): { page: PageId; filters: PageFilters } {
@@ -102,7 +104,7 @@ function queueTarget(code: string): { page: PageId; filters: PageFilters } {
   if (['payouts_requested', 'payouts_approved', 'unverified_requisites', 'overdue_receipts'].includes(code)) return { page: 'finance', filters: {} }
   if (code === 'new_support_tickets') return { page: 'support', filters: {} }
   if (code === 'unavailable_publications') return { page: 'publications', filters: { availability: 'unavailable' } }
-  const platform = ['youtube', 'tiktok', 'vk', 'rutube'].find((item) => code.startsWith(item + '_'))
+  const platform = ['youtube', 'tiktok', 'vk', 'rutube', 'instagram', 'dzen'].find((item) => code.startsWith(item + '_'))
   if (platform) return { page: 'publications', filters: { platform } }
   return { page: 'overview', filters: {} }
 }
@@ -222,7 +224,7 @@ function rowsFrom(payload: PagePayload | null, page: PageId, role: Role): Row[] 
   if (page === 'exports') return items.map((item) => row({
     id: item.id, rawId: item.id, title: exportTypeLabel(item.export_type),
     meta: exportFormatLabel(item.format),
-    status: statusLabel(item.status), rawStatus: item.status, tone: tone(item.status),
+    status: exportJobStatusLabel(item.status), rawStatus: item.status, tone: tone(item.status),
     date: date(item.completed_at || item.created_at), value: item.row_count == null ? '—' : numeric(item.row_count) + ' строк',
     initials: item.format === 'csv' ? 'CSV' : 'XLS',
   }))
@@ -359,24 +361,28 @@ function ListPage({ page, role, rows, query, loading, error, reload, action, car
   const [riskOnly, setRiskOnly] = useState(false)
   const [sort, setSort] = useState('newest')
   const remotePublicationFilters = page === 'publications' && role !== 'blogger'
+  const remoteReadingFilters = page === 'readings'
+  const remoteFilters = remotePublicationFilters || remoteReadingFilters
   const platformFor = (item: Row) => item.payload?.publication?.platform ?? item.payload?.account?.platform ?? item.payload?.platform ?? ''
   const riskFor = (item: Row) => visibleRiskFlags(item.payload?.risk_flags).length > 0
   useEffect(() => { setStatus(''); setPlatform(''); setRiskOnly(false); setSort('newest') }, [page])
-  const statuses = remotePublicationFilters
-    ? Object.entries(statusLabels).filter(([id]) => ['draft', 'pending_review', 'changes_required', 'approved', 'rejected', 'inactive', 're_review_required'].includes(id))
+  const statuses = remoteFilters
+    ? Object.entries(statusLabels).filter(([id]) => (remoteReadingFilters
+      ? ['pending', 'accepted', 'rejected'].includes(id)
+      : ['draft', 'pending_review', 'changes_required', 'approved', 'rejected', 'inactive', 're_review_required'].includes(id)))
     : Array.from(new Map(rows.map((item) => [item.rawStatus, item.status])).entries()).filter(([id]) => id)
-  const pagePlatforms = remotePublicationFilters ? platformIds : Array.from(new Set(rows.map(platformFor).filter(Boolean)))
-  const selectedStatus = remotePublicationFilters ? filters.status ?? '' : status
-  const selectedPlatform = remotePublicationFilters ? filters.platform ?? '' : platform
+  const pagePlatforms = remoteFilters ? platformIds : Array.from(new Set(rows.map(platformFor).filter(Boolean)))
+  const selectedStatus = remoteFilters ? filters.status ?? '' : status
+  const selectedPlatform = remoteFilters ? filters.platform ?? '' : platform
   const changeFilter = (name: string, value: string) => {
-    if (!remotePublicationFilters) {
+    if (!remoteFilters) {
       if (name === 'status') setStatus(value)
       if (name === 'platform') setPlatform(value)
       return
     }
     setPageNumber(1); setFilters({ ...filters, [name]: value })
   }
-  const visibleRows = remotePublicationFilters ? [...rows] : rows.filter((item) => (!status || item.rawStatus === status) && (!platform || platformFor(item) === platform) && (!riskOnly || riskFor(item)))
+  const visibleRows = remoteFilters ? rows.filter((item) => !riskOnly || riskFor(item)) : rows.filter((item) => (!status || item.rawStatus === status) && (!platform || platformFor(item) === platform) && (!riskOnly || riskFor(item)))
   if (sort === 'oldest') visibleRows.reverse()
   if (sort === 'title') visibleRows.sort((left, right) => left.title.localeCompare(right.title, 'ru'))
   const applyAdvanced = (event: FormEvent<HTMLFormElement>) => {
@@ -393,6 +399,7 @@ function ListPage({ page, role, rows, query, loading, error, reload, action, car
 }
 type WorkKind = 'content' | 'reading' | 'moderate-profile' | 'moderate-social' | 'moderate-publication' | 'moderate-reading' | 'correct-reading'
 type WorkState = { kind: WorkKind; item?: Row } | null
+const MAX_VIEW_COUNT = 1_000_000_000_000
 
 const workTitles: Record<WorkKind, [string, string]> = {
   content: ['Новый ролик', 'Карточка и ссылка на публикацию'],
@@ -443,6 +450,15 @@ function WorkDrawer({ state, role, close, completed }: {
     event.preventDefault(); setPending(true); setError('')
     const form = new FormData(event.currentTarget)
     const value = (name: string) => String(form.get(name) ?? '').trim()
+    const viewCount = (name: string) => {
+      const raw = value(name)
+      if (!/^\d+$/.test(raw)) throw new Error('Укажите целое количество просмотров')
+      const parsed = Number(raw)
+      if (!Number.isSafeInteger(parsed) || parsed > MAX_VIEW_COUNT) {
+        throw new Error('Количество просмотров указано некорректно')
+      }
+      return parsed
+    }
     const submitAction = ((event.nativeEvent as SubmitEvent).submitter as HTMLButtonElement | null)?.value
     try {
       if (state.kind === 'content') {
@@ -462,7 +478,7 @@ function WorkDrawer({ state, role, close, completed }: {
         return completed(value('publication_url') ? 'Ролик отправлен на модерацию' : 'Карточка ролика создана')
       }
       if (state.kind === 'reading') {
-        await createManualReading(value('publication_id'), Number(value('reading_value')))
+        await createManualReading(value('publication_id'), viewCount('reading_value'))
         return completed('Показание добавлено')
       }
       const reason = value('reason')
@@ -481,8 +497,8 @@ function WorkDrawer({ state, role, close, completed }: {
         }
         await reviewPublication(state.item!.rawId!, decision, reason, value('resolved_product_id') || undefined)
       }
-      else if (state.kind === 'correct-reading') await correctReading(state.item!.rawId!, Number(value('accepted_value')), reason)
-      else await reviewReading(state.item!.rawId!, decision, reason, value('accepted_value') ? Number(value('accepted_value')) : undefined)
+      else if (state.kind === 'correct-reading') await correctReading(state.item!.rawId!, viewCount('accepted_value'), reason)
+      else await reviewReading(state.item!.rawId!, decision, reason, decision === 'correct' ? viewCount('accepted_value') : undefined)
       completed('Решение сохранено')
     } catch (caught) {
       setError(caught instanceof ApiError || caught instanceof Error ? caught.message : 'Не удалось сохранить изменения')
@@ -530,7 +546,7 @@ function WorkDrawer({ state, role, close, completed }: {
         {state.kind === 'reading' ? <section className="form-section"><h3>Данные площадки</h3><div className="form-grid">
           <Field label="Публикация" wide><select name="publication_id" required defaultValue=""><option value="" disabled>Выберите одобренную публикацию</option>{manualPublications.map((item) => <option value={item.id} key={item.id}>{platformConfig(item.platform).label}: {item.external_title || item.submitted_url}</option>)}</select></Field>
           <Field label="Текущее число просмотров" wide><input name="reading_value" type="number" min="0" required /></Field>
-        </div>{!manualPublications.length ? <div className="inline-note">Для YouTube, TikTok, VK и RUTUBE просмотры собираются автоматически. Ручное показание доступно только для остальных одобренных публикаций.</div> : null}</section> : null}
+        </div>{!manualPublications.length ? <div className="inline-note">Для всех поддерживаемых площадок просмотры собираются автоматически.</div> : null}</section> : null}
         {publicationOperational ? <section className="form-section"><h3><ClipboardCheck size={16} />Промокоды</h3>
           {promoIssuances.length ? <div className="account-list">{promoIssuances.map((issuance) => <span key={issuance.id}><b>{issuance.marketplace === 'ozon' ? 'OZ' : issuance.marketplace === 'wildberries' ? 'WB' : 'YM'}</b><em>{issuance.marketplace === 'ozon' ? 'Ozon' : issuance.marketplace === 'wildberries' ? 'Wildberries' : 'Яндекс Маркет'} · {date(issuance.issued_at)}</em><Badge value="Выдан" color="green" /></span>)}</div> : <div className="inline-note">Выдача промокодов ещё не фиксировалась.</div>}
           <div className="decision-grid"><Field label="Маркетплейс" wide><select name="marketplace" defaultValue="ozon"><option value="ozon">Ozon</option><option value="wildberries">Wildberries</option><option value="yandex_market">Яндекс Маркет</option></select></Field><Field label="Служебный комментарий" wide><textarea name="promo_note" rows={3} placeholder="Например: передан блогеру в Telegram" /></Field><button className="button button--secondary form-field--wide" name="action" value="promo" disabled={pending}><Check size={17} />Зафиксировать выдачу</button></div>
@@ -545,8 +561,7 @@ function WorkDrawer({ state, role, close, completed }: {
             {decision === 'approve' ? <div className="moderation-checklist form-field--wide"><span>Проверено перед одобрением</span><label><input type="checkbox" required />Товар и артикул соответствуют ролику</label><label><input type="checkbox" required />Формат и содержание соответствуют правилам</label><label><input type="checkbox" required />Название и обязательные хэштеги корректны</label></div> : null}
           </> : null}
           {state.kind === 'moderate-reading' ? <select value={decision} onChange={(e) => setDecision(e.target.value)}><option value="accept">Принять</option><option value="correct">Исправить</option><option value="reject">Отклонить</option></select> : null}
-          {state.kind === 'correct-reading' ? <input type="hidden" value="correct" /> : null}
-          {decision === 'correct' ? <Field label="Принятое значение"><input name="accepted_value" type="number" min="0" required /></Field> : null}
+          {decision === 'correct' ? <Field label={state.kind === 'correct-reading' ? 'Новое принятое значение' : 'Принятое значение'}><input name="accepted_value" type="number" min="0" max={MAX_VIEW_COUNT} step="1" defaultValue={itemData.accepted_value ?? itemData.reported_value ?? ''} required /></Field> : null}
           <Field label={negative ? 'Причина (обязательно)' : 'Комментарий'} wide>{negative && rejectionReasons.length ? <><input name="reason" list="rejection-reasons" required /><datalist id="rejection-reasons">{rejectionReasons.map((reason) => <option value={reason} key={reason} />)}</datalist></> : <textarea name="reason" rows={4} required={negative} />}</Field>
         </div></section> : null}
         {error ? <div className="auth-error"><AlertTriangle size={16} />{error}</div> : null}
@@ -658,7 +673,7 @@ function Cabinet({ user, signedOut }: { user: CurrentUser; signedOut: () => void
   const totalPages = page === 'moderation' ? Math.max(pagingSource.profiles?.total_pages ?? 1, pagingSource.publications?.total_pages ?? 1, pagingSource.socialAccounts?.total_pages ?? 1) : Number(pagingSource.total_pages ?? 1)
   const totalItems = page === 'moderation' ? Number(pagingSource.profiles?.total_items ?? 0) + Number(pagingSource.publications?.total_items ?? 0) + Number(pagingSource.socialAccounts?.total_items ?? 0) : Number(pagingSource.total_items ?? rows.length)
   const secondary = user.role === 'blogger' && page === 'finance' ? { label: 'Реквизиты', run: () => setPayout({ mode: 'requisites' as const }) } : user.role === 'admin' && page === 'billing' ? { label: 'Новая ставка', run: () => setOperation({ kind: 'rate' }) } : null
-  return <div className="app-shell"><Sidebar page={page} user={user} identity={creatorIdentity} open={menu} navigate={navigate} close={() => setMenu(false)} signOut={signOut} settings={() => runTransition(() => setSettingsOpen(true))} /><div className="workspace"><Header menu={() => setMenu(true)} query={query} setQuery={setQuery} navigate={navigate} supportAvailable={allowed.includes('support')} /><main key={page}>{page === 'overview' && user.role === 'blogger' ? <CreatorOverview data={data ?? {}} query={query} loading={loading} error={error} reload={reload} openVideoCard={(id) => setEntity({ kind: 'video-card', id })} createVideo={() => setWork({ kind: 'content' })} navigate={navigate} /> : page === 'overview' ? <Overview data={data} role={user.role} query={query} loading={loading} error={error} reload={reload} openVideoCard={(id) => setEntity({ kind: 'video-card', id })} openQueue={openDashboardQueue} /> : page === 'analytics' ? <AnalyticsPage initialData={data} role={user.role} initialLoading={loading} initialError={error} reload={reload} /> : <ListPage page={page} role={user.role} rows={rows} query={query} loading={loading} error={error} reload={reload} action={action} cardAction={(item) => page === 'readings' && item.payload?.video_card_id ? setEntity({ kind: 'video-card', id: item.payload.video_card_id }) : void action(item)} primaryLabel={primary?.label} primaryAction={primary?.run} secondaryLabel={secondary?.label} secondaryAction={secondary?.run} pageNumber={pageNumber} totalPages={totalPages} totalItems={totalItems} setPageNumber={setPageNumber} filters={filters} setFilters={setFilters} />}</main></div>{work ? <WorkDrawer state={work} role={user.role} close={() => runTransition(() => setWork(null))} completed={completeWork} /> : null}{entity ? <EntityDrawer kind={entity.kind} id={entity.id} payload={entity.payload} close={() => runTransition(() => setEntity(null))} changed={(message) => { notify(message); reload() }} /> : null}{payout ? <PayoutDrawer mode={payout.mode} payoutId={payout.id} role={user.role} close={() => runTransition(() => setPayout(null))} completed={(message) => { setPayout(null); notify(message); reload() }} /> : null}{earningPeriod ? <EarningsDrawer period={earningPeriod} close={() => runTransition(() => setEarningPeriod(null))} /> : null}{support ? <SupportDrawer mode={support.mode} ticketId={support.id} user={user} close={() => runTransition(() => setSupport(null))} changed={(message) => { notify(message); reload() }} /> : null}{exportJob ? <ExportDrawer exportId={exportJob.id} close={() => runTransition(() => setExportJob(null))} changed={(message) => { notify(message); reload() }} /> : null}{bloggerCard ? <BloggerDrawer bloggerId={bloggerCard} close={() => runTransition(() => setBloggerCard(null))} manageAccess={user.role === 'admin' ? () => { const id = bloggerCard; setBloggerCard(null); setAdminUser(id) } : undefined} /> : null}{adminUser ? <AdminUserDrawer userId={adminUser} currentUser={user} close={() => runTransition(() => setAdminUser(null))} changed={(message) => { notify(message); reload() }} /> : null}{operation ? <OperationsDrawer kind={operation.kind} id={operation.id} role={user.role} close={() => runTransition(() => setOperation(null))} changed={(message) => { notify(message); reload() }} /> : null}{settingsOpen ? <SettingsDrawer user={user} close={() => runTransition(() => setSettingsOpen(false))} changed={(message) => { notify(message); void refreshCreatorIdentity() }} signedOut={signOut} /> : null}{toast ? <div className="toast"><Check size={18} /><span>{toast}</span><button onClick={() => setToast('')}><X size={16} /></button></div> : null}</div>
+  return <div className="app-shell"><Sidebar page={page} user={user} identity={creatorIdentity} open={menu} navigate={navigate} close={() => setMenu(false)} signOut={signOut} settings={() => runTransition(() => setSettingsOpen(true))} /><div className="workspace"><Header menu={() => setMenu(true)} query={query} setQuery={setQuery} navigate={navigate} supportAvailable={allowed.includes('support')} /><main key={page}>{page === 'overview' && user.role === 'blogger' ? <CreatorOverview data={data ?? {}} query={query} loading={loading} error={error} reload={reload} openVideoCard={(id) => setEntity({ kind: 'video-card', id })} createVideo={() => setWork({ kind: 'content' })} navigate={navigate} /> : page === 'overview' ? <Overview data={data} role={user.role} query={query} loading={loading} error={error} reload={reload} openVideoCard={(id) => setEntity({ kind: 'video-card', id })} openQueue={openDashboardQueue} /> : page === 'analytics' ? <AnalyticsPage initialData={data} role={user.role} initialLoading={loading} initialError={error} reload={reload} openProduct={allowed.includes('publications') ? (product) => navigate('publications', { product: String(product.label ?? '') }) : undefined} /> : <ListPage page={page} role={user.role} rows={rows} query={query} loading={loading} error={error} reload={reload} action={action} cardAction={(item) => page === 'readings' && item.payload?.video_card_id ? setEntity({ kind: 'video-card', id: item.payload.video_card_id }) : void action(item)} primaryLabel={primary?.label} primaryAction={primary?.run} secondaryLabel={secondary?.label} secondaryAction={secondary?.run} pageNumber={pageNumber} totalPages={totalPages} totalItems={totalItems} setPageNumber={setPageNumber} filters={filters} setFilters={setFilters} />}</main></div>{work ? <WorkDrawer state={work} role={user.role} close={() => runTransition(() => setWork(null))} completed={completeWork} /> : null}{entity ? <EntityDrawer kind={entity.kind} id={entity.id} payload={entity.payload} close={() => runTransition(() => setEntity(null))} changed={(message) => { notify(message); reload() }} /> : null}{payout ? <PayoutDrawer mode={payout.mode} payoutId={payout.id} role={user.role} close={() => runTransition(() => setPayout(null))} completed={(message) => { setPayout(null); notify(message); reload() }} /> : null}{earningPeriod ? <EarningsDrawer period={earningPeriod} close={() => runTransition(() => setEarningPeriod(null))} /> : null}{support ? <SupportDrawer mode={support.mode} ticketId={support.id} user={user} close={() => runTransition(() => setSupport(null))} changed={(message) => { notify(message); reload() }} /> : null}{exportJob ? <ExportDrawer exportId={exportJob.id} role={user.role as Exclude<Role, 'blogger'>} close={() => runTransition(() => setExportJob(null))} changed={(message) => { notify(message); reload() }} /> : null}{bloggerCard ? <BloggerDrawer bloggerId={bloggerCard} close={() => runTransition(() => setBloggerCard(null))} manageAccess={user.role === 'admin' ? () => { const id = bloggerCard; setBloggerCard(null); setAdminUser(id) } : undefined} /> : null}{adminUser ? <AdminUserDrawer userId={adminUser} currentUser={user} close={() => runTransition(() => setAdminUser(null))} changed={(message) => { notify(message); reload() }} /> : null}{operation ? <OperationsDrawer kind={operation.kind} id={operation.id} role={user.role} close={() => runTransition(() => setOperation(null))} changed={(message) => { notify(message); reload() }} /> : null}{settingsOpen ? <SettingsDrawer user={user} close={() => runTransition(() => setSettingsOpen(false))} changed={(message) => { notify(message); void refreshCreatorIdentity() }} signedOut={signOut} /> : null}{toast ? <div className="toast"><Check size={18} /><span>{toast}</span><button onClick={() => setToast('')}><X size={16} /></button></div> : null}</div>
 }
 export function App() {
   const [user, setUser] = useState<CurrentUser | null>(null)

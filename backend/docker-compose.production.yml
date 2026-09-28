@@ -1,5 +1,25 @@
+x-app-security: &app-security
+  init: true
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 200
+
 services:
+  migrate:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
   api:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+    command: >-
+      uvicorn app.main:app --host 0.0.0.0 --port 8000
+      --proxy-headers --forwarded-allow-ips=172.30.0.10
     environment:
       ENVIRONMENT: production
       COOKIE_SECURE: "true"
@@ -7,6 +27,38 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
     ports: !override
       - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks:
+      default: {}
+      production_edge: {}
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"
+      interval: 15s
+      timeout: 6s
+      retries: 5
+      start_period: 30s
+
+  web:
+    image: ${WEB_IMAGE:?WEB_IMAGE is required}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      production_edge:
+        ipv4_address: 172.30.0.10
+      host_edge: {}
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8080/web-health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   minio:
     ports: !reset []
@@ -15,6 +67,8 @@ services:
     profiles: ["development"]
 
   email-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     environment:
       ENVIRONMENT: production
       SMTP_HOST: ${SMTP_HOST:?SMTP_HOST is required}
@@ -26,6 +80,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
 
   monitor:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
     environment:
       ENVIRONMENT: production
       SMTP_HOST: ${MONITOR_SMTP_HOST:?MONITOR_SMTP_HOST is required}
@@ -35,3 +91,59 @@ services:
       SMTP_FROM_EMAIL: ${MONITOR_SMTP_FROM_EMAIL:?MONITOR_SMTP_FROM_EMAIL is required}
       SMTP_USERNAME: ${MONITOR_SMTP_USERNAME:-}
       SMTP_PASSWORD: ${MONITOR_SMTP_PASSWORD:-}
+
+  youtube-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  tiktok-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  vk-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  rutube-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  instagram-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  dzen-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  calculation-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  lifecycle-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  export-worker:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  scheduler:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  creator-retention:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+  export-cleanup:
+    <<: *app-security
+    image: ${BACKEND_IMAGE:?BACKEND_IMAGE is required}
+
+networks:
+  production_edge:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  host_edge: {}

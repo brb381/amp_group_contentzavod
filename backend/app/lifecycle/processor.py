@@ -31,6 +31,8 @@ from app.readings.models import YouTubeViewCollectionJob
 from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
 from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
 from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
+from app.instagram.models import InstagramEnrichmentJob, InstagramViewCollectionJob
+from app.dzen.models import DzenEnrichmentJob, DzenViewCollectionJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -163,6 +165,10 @@ def _suspend(db, user: User, lifecycle: CreatorLifecycle, job: LifecycleJob, now
             VKViewCollectionJob,
             RutubeEnrichmentJob,
             RutubeViewCollectionJob,
+            InstagramEnrichmentJob,
+            InstagramViewCollectionJob,
+            DzenEnrichmentJob,
+            DzenViewCollectionJob,
         ):
             db.execute(
                 update(job_model)

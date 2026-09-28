@@ -895,11 +895,23 @@ def test_payment_settles_reserved_money_and_finance_cannot_skip_approval(client)
         {
             "idempotency_key": str(uuid.uuid4()),
             "paid_on": moscow_today().isoformat(),
+            "payment_reference": "forbidden-payment",
         },
     )
     assert forbidden.status_code == 403
 
     _login(client, finance_email)
+    missing_reference = _staff_command(
+        client,
+        payout["id"],
+        "payments",
+        {
+            "idempotency_key": str(uuid.uuid4()),
+            "paid_on": moscow_today().isoformat(),
+        },
+    )
+    assert missing_reference.status_code == 422
+
     key = uuid.uuid4()
     payment_payload = {
         "idempotency_key": str(key),

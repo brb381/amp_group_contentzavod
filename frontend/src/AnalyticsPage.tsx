@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import {
-  AlertTriangle, BarChart3, CircleDollarSign, Eye, Filter, LoaderCircle,
+  AlertTriangle, ArrowRight, BarChart3, CircleDollarSign, Eye, Filter, LoaderCircle,
   Package, RefreshCw, Trophy, Video, WifiOff,
 } from 'lucide-react'
 import { AnalyticsFilters, ApiError, JsonObject, PagePayload, Role, listProducts, loadStaffAnalytics } from './api'
@@ -32,18 +32,43 @@ function Breakdown({ title, items }: { title: string; items: Json[] }) {
   </section>
 }
 
-function Ranking({ title, items }: { title: string; items: Json[] }) {
-  return <section className="panel analytics-ranking">
-    <div className="panel__head"><div><h2>{title}</h2><p>По подтвержденным данным</p></div><Trophy size={18} /></div>
-    <div>{items.slice(0, 7).map((item, index) => <article key={item.id}>
-      <b>{index + 1}</b><span><strong>{item.label}</strong><small>{rubles(item.accrual_kopecks)}</small></span><em>{numeric(item.views)}</em>
-    </article>)}{!items.length ? <div className="analytics-empty">Рейтинг пока не сформирован</div> : null}</div>
+const monthLabel = (value?: string) => {
+  if (!value) return ''
+  const label = new Date(`${value.slice(0, 7)}-01T00:00:00+03:00`)
+    .toLocaleDateString('ru-RU', { month: 'long', year: 'numeric', timeZone: 'Europe/Moscow' })
+    .replace(' г.', '')
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+const periodLabel = (from?: string, to?: string) => {
+  const start = monthLabel(from)
+  const end = monthLabel(to)
+  if (!start || !end) return 'За выбранный период'
+  return start === end ? `За ${start}` : `${start} — ${end}`
+}
+
+function ProductRanking({ items, period, openProduct }: {
+  items: Json[]; period: string; openProduct?: (product: Json) => void
+}) {
+  const meaningful = items.filter((item) => Number(item.views ?? 0) > 0 || Number(item.accrual_kopecks ?? 0) > 0).slice(0, 7)
+  const content = (item: Json, index: number) => <>
+    <b>{index + 1}</b>
+    <span><strong>{item.label}</strong><small>Начислено блогерам: {rubles(item.accrual_kopecks)}</small></span>
+    <em><small>Подтверждённые просмотры</small><strong>{numeric(item.views)}</strong></em>
+    {openProduct ? <ArrowRight size={17} /> : null}
+  </>
+  return <section className="panel analytics-product-ranking">
+    <div className="panel__head"><div><h2>Товары по подтверждённому охвату</h2><p>{period}</p></div><Trophy size={18} /></div>
+    <div>{meaningful.map((item, index) => openProduct
+      ? <button type="button" key={item.id} onClick={() => openProduct(item)} aria-label={`Открыть публикации товара ${item.label}`}>{content(item, index)}</button>
+      : <article key={item.id}>{content(item, index)}</article>
+    )}{!meaningful.length ? <div className="analytics-empty">Нет товаров с подтверждёнными просмотрами за этот период</div> : null}</div>
   </section>
 }
 
-export function AnalyticsPage({ initialData, initialLoading, initialError, reload, role }: {
+export function AnalyticsPage({ initialData, initialLoading, initialError, reload, role, openProduct }: {
   initialData: PagePayload | null; initialLoading: boolean; initialError: string
-  reload: () => void; role: Role
+  reload: () => void; role: Role; openProduct?: (product: Json) => void
 }) {
   const [data, setData] = useState<Json>((initialData ?? {}) as Json)
   const [products, setProducts] = useState<JsonObject[]>([])
@@ -102,7 +127,7 @@ export function AnalyticsPage({ initialData, initialLoading, initialError, reloa
         <div className="bar-labels">{monthly.map((item) => <span key={item.period}>{new Date(item.period).toLocaleDateString('ru-RU', { month: 'short', year: '2-digit', timeZone: 'Europe/Moscow' })}</span>)}</div>
       </section>
       <div className="analytics-breakdown-grid"><Breakdown title="По брендам" items={data.by_brand ?? []} /><Breakdown title="По товарам" items={data.by_product ?? []} /><Breakdown title="По площадкам" items={data.by_platform ?? []} /></div>
-      <div className="analytics-ranking-grid"><Ranking title="Лучшие блогеры" items={data.top_bloggers ?? []} /><Ranking title="Лучшие товары" items={data.top_products ?? []} /><Ranking title="Лучшие публикации" items={data.top_publications ?? []} /></div>
+      <ProductRanking items={data.top_products ?? []} period={periodLabel(data.period_from, data.period_to)} openProduct={openProduct} />
       <section className="panel analytics-risks"><div className="panel__head"><div><h2>Контроль рисков</h2><p>Сигналы, требующие проверки</p></div><AlertTriangle size={18} /></div><div>
         <span><AlertTriangle size={16} /><b>{numeric(risks.suspicious_accruals)}</b><small>Подозрительных начислений</small></span>
         <span><WifiOff size={16} /><b>{numeric(risks.failed_enrichment_jobs)}</b><small>Ошибок метаданных</small></span>

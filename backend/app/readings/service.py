@@ -121,7 +121,13 @@ def create_manual_reading(
     publication, _ = row
     if publication.status != PublicationStatus.APPROVED:
         raise APIError(409, "PUBLICATION_NOT_ACTIVE", "Only approved publications accept readings")
-    if publication.platform in {Platform.YOUTUBE, Platform.TIKTOK, Platform.VK}:
+    if publication.platform in {
+        Platform.YOUTUBE,
+        Platform.TIKTOK,
+        Platform.VK,
+        Platform.INSTAGRAM,
+        Platform.DZEN,
+    }:
         raise APIError(409, "READING_IS_AUTOMATIC", "Platform readings are collected automatically")
 
     period = reporting_period(now)
@@ -240,12 +246,18 @@ def list_my_readings(
     *,
     actor: User,
     publication_id: uuid.UUID | None,
+    status: ReadingStatus | None,
+    platform: Platform | None,
     page: int,
     page_size: int,
 ) -> ViewReadingListResponse:
     filters = [VideoCard.blogger_id == actor.id]
     if publication_id:
         filters.append(ViewReading.publication_id == publication_id)
+    if status:
+        filters.append(ViewReading.status == status)
+    if platform:
+        filters.append(Publication.platform == platform)
     total = db.scalar(
         select(func.count())
         .select_from(ViewReading)
@@ -277,6 +289,7 @@ def list_readings_for_review(
     *,
     status: ReadingStatus | None,
     period: date | None,
+    platform: Platform | None,
     suspicious_only: bool,
     page: int,
     page_size: int,
@@ -286,16 +299,23 @@ def list_readings_for_review(
         filters.append(ViewReading.status == status)
     if period:
         filters.append(ViewReading.reporting_period == period)
+    if platform:
+        filters.append(Publication.platform == platform)
     if suspicious_only:
         filters.append(ViewReading.risk_flags != [])
-    total = db.scalar(select(func.count()).select_from(ViewReading).where(*filters)) or 0
+    total = db.scalar(
+        select(func.count())
+        .select_from(ViewReading)
+        .join(Publication, Publication.id == ViewReading.publication_id)
+        .where(*filters)
+    ) or 0
     rows = list(
         db.execute(
             select(ViewReading, Publication, VideoCard)
             .join(Publication, Publication.id == ViewReading.publication_id)
             .join(VideoCard, VideoCard.id == Publication.video_card_id)
             .where(*filters)
-            .order_by(ViewReading.captured_at, ViewReading.id)
+            .order_by(ViewReading.captured_at.desc(), ViewReading.id.desc())
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -443,6 +463,12 @@ def correct_accepted_reading(
             "Only an accepted reading can be corrected",
         )
     old_value = reading.accepted_value
+    if old_value == payload.accepted_value:
+        raise APIError(
+            409,
+            "VIEW_READING_CORRECTION_NO_CHANGE",
+            "The corrected value must differ from the accepted value",
+        )
     reading.accepted_value = payload.accepted_value
     reading.review_reason = payload.reason
     reading.reviewed_by_user_id = locked_manager.id

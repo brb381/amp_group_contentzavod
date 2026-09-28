@@ -28,16 +28,16 @@ from app.support.models import SupportStatus
 
 
 EXPORT_SCHEMA_VERSIONS = {
-    ExportType.BLOGGERS: 1,
-    ExportType.SOCIAL_ACCOUNTS: 1,
-    ExportType.PUBLICATIONS: 1,
-    ExportType.VIEW_READINGS: 1,
-    ExportType.MODERATION_HISTORY: 1,
-    ExportType.ACCRUALS: 1,
-    ExportType.PAYOUT_REGISTER: 1,
-    ExportType.PAYOUT_HISTORY: 1,
-    ExportType.SUPPORT_TICKETS: 1,
-    ExportType.AUDIT_LOG: 1,
+    ExportType.BLOGGERS: 2,
+    ExportType.SOCIAL_ACCOUNTS: 2,
+    ExportType.PUBLICATIONS: 2,
+    ExportType.VIEW_READINGS: 2,
+    ExportType.MODERATION_HISTORY: 2,
+    ExportType.ACCRUALS: 2,
+    ExportType.PAYOUT_REGISTER: 2,
+    ExportType.PAYOUT_HISTORY: 2,
+    ExportType.SUPPORT_TICKETS: 2,
+    ExportType.AUDIT_LOG: 2,
 }
 PAYOUT_EXPORT_TYPES = {ExportType.PAYOUT_REGISTER, ExportType.PAYOUT_HISTORY}
 ROLE_EXPORT_TYPES = {
@@ -83,7 +83,7 @@ ALLOWED_DATA_FILTERS = {
 }
 ALLOWED_STATUS_VALUES = {
     ExportType.BLOGGERS: {status.value for status in AccountStatus},
-    ExportType.SOCIAL_ACCOUNTS: {SocialAccountStatus.APPROVED.value},
+    ExportType.SOCIAL_ACCOUNTS: {status.value for status in SocialAccountStatus},
     ExportType.PUBLICATIONS: {status.value for status in PublicationStatus},
     ExportType.VIEW_READINGS: {status.value for status in ReadingStatus},
     ExportType.MODERATION_HISTORY: {

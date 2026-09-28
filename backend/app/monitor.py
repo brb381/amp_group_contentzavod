@@ -1,4 +1,5 @@
 import logging
+import shutil
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import NullPool
 
+from app.billing.reconciliation import reconcile_finances
 from app.logging_config import configure_logging
 from app.smtp import send_smtp_message, validate_smtp_transport
 
@@ -33,8 +35,15 @@ DISPATCHERS = (
     "vk",
     "rutube-views",
     "rutube",
+    "instagram-views",
+    "instagram",
+    "dzen-views",
+    "dzen",
 )
-QUEUES = ("email", "youtube", "tiktok", "vk", "rutube", "calculations", "lifecycle", "exports")
+QUEUES = (
+    "email", "youtube", "tiktok", "vk", "rutube", "instagram", "dzen",
+    "calculations", "lifecycle", "exports",
+)
 STARTUP_GRACE_SECONDS = 90
 SCHEDULER_MAX_AGE_SECONDS = 90
 REMINDER_SECONDS = 3600
@@ -60,6 +69,10 @@ JOB_SPECS = (
     JobSpec("vk-views", "vk_view_collection_jobs", overdue_minutes=120),
     JobSpec("rutube-enrichment", "rutube_enrichment_jobs", overdue_minutes=120),
     JobSpec("rutube-views", "rutube_view_collection_jobs", overdue_minutes=120),
+    JobSpec("instagram-enrichment", "instagram_enrichment_jobs", overdue_minutes=120),
+    JobSpec("instagram-views", "instagram_view_collection_jobs", overdue_minutes=120),
+    JobSpec("dzen-enrichment", "dzen_enrichment_jobs", overdue_minutes=120),
+    JobSpec("dzen-views", "dzen_view_collection_jobs", overdue_minutes=120),
     JobSpec("calculations", "calculation_jobs"),
     JobSpec("lifecycle", "lifecycle_jobs"),
     JobSpec("exports", "export_jobs", state_column="status"),
@@ -76,6 +89,10 @@ class MonitorSettings(BaseSettings):
     monitor_alert_email: str
     monitor_poll_seconds: int = Field(default=30, ge=10, le=300)
     monitor_metrics_port: int = Field(default=9101, ge=1, le=65535)
+    monitor_min_disk_free_percent: int = Field(default=15, ge=5, le=90)
+    monitor_financial_reconciliation_seconds: int = Field(
+        default=3600, ge=60, le=86400
+    )
     smtp_host: str
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_use_tls: bool = True
@@ -139,6 +156,35 @@ class MetricsSnapshot:
 METRICS = MetricsSnapshot()
 
 
+class FinancialCheck:
+    def __init__(self) -> None:
+        self.last_checked_at: datetime | None = None
+        self.issues: dict[str, str] = {}
+
+    def collect(self, connection, now: datetime, interval_seconds: int) -> dict[str, str]:
+        if (
+            self.last_checked_at is not None
+            and (now - self.last_checked_at).total_seconds() < interval_seconds
+        ):
+            return self.issues.copy()
+        reconciliation = reconcile_finances(connection)
+        issues = {}
+        if reconciliation.ledger_mismatches:
+            issues["finance:ledger"] = (
+                f"{reconciliation.ledger_mismatches} balance snapshots do not match ledger"
+            )
+        if reconciliation.payout_reserve_mismatches:
+            issues["finance:payout_reserve"] = (
+                f"{reconciliation.payout_reserve_mismatches} payout reserves do not match active requests"
+            )
+        self.last_checked_at = now
+        self.issues = issues
+        return issues.copy()
+
+
+FINANCIAL_CHECK = FinancialCheck()
+
+
 class MetricsHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path != "/metrics":
@@ -198,6 +244,13 @@ def _database_issues(settings: MonitorSettings, now: datetime) -> dict[str, str]
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
+            issues.update(
+                FINANCIAL_CHECK.collect(
+                    connection,
+                    now,
+                    settings.monitor_financial_reconciliation_seconds,
+                )
+            )
             for spec in JOB_SPECS:
                 overdue, expired, failed = _job_counts(connection, spec, now)
                 METRICS.record_job(spec.name, (overdue, expired, failed))
@@ -258,10 +311,24 @@ def _worker_issues(settings: MonitorSettings) -> dict[str, str]:
     }
 
 
+def _disk_issues(settings: MonitorSettings) -> dict[str, str]:
+    usage = shutil.disk_usage("/")
+    free_percent = usage.free * 100 / usage.total
+    if free_percent < settings.monitor_min_disk_free_percent:
+        return {
+            "disk": (
+                f"free space {free_percent:.1f}% is below "
+                f"{settings.monitor_min_disk_free_percent}%"
+            )
+        }
+    return {}
+
+
 def collect_issues(
     settings: MonitorSettings, now: datetime, *, check_processes: bool = True
 ) -> dict[str, str]:
     issues = {}
+    issues.update(_disk_issues(settings))
     if check_processes:
         try:
             with urlopen(settings.api_readiness_url, timeout=3) as response:

@@ -102,7 +102,7 @@ export function PayoutDrawer({ mode, payoutId, role, close, completed }: {
       }
       if (command === 'payment') {
         payload.paid_on = value('paid_on')
-        payload.payment_reference = value('payment_reference') || null
+        payload.payment_reference = value('payment_reference')
       }
       if (command === 'receipt') payload.received_on = value('received_on')
       await runPayoutCommand(payoutId, command, keyFor(command), payload)
@@ -145,7 +145,7 @@ export function PayoutDrawer({ mode, payoutId, role, close, completed }: {
               {['review', 'approve'].includes(command) ? <Field label="Комментарий" wide><textarea name="comment" rows={3} /></Field> : null}
               {command === 'approve' && data.recipient_type === 'self_employed' ? <label className="check-field"><input name="self_employment_verified" type="checkbox" required /><span>Статус самозанятого проверен</span></label> : null}
               {command === 'reject' ? <><Field label="Причина отклонения" wide><textarea name="reason" rows={3} minLength={3} required /></Field><Field label="Внутренний комментарий" wide><textarea name="comment" rows={2} /></Field></> : null}
-              {command === 'payment' ? <div className="form-grid"><Field label="Дата оплаты"><input name="paid_on" type="date" defaultValue={today()} required /></Field><Field label="Номер платежа"><input name="payment_reference" maxLength={255} /></Field></div> : null}
+              {command === 'payment' ? <div className="form-grid"><Field label="Дата оплаты"><input name="paid_on" type="date" defaultValue={today()} required /></Field><Field label="Номер платежа"><input name="payment_reference" maxLength={255} required /></Field></div> : null}
               {command === 'receipt' ? <Field label="Дата получения чека"><input name="received_on" type="date" defaultValue={today()} required /></Field> : null}
             </div> : null}
           </section> : null}

@@ -14,6 +14,8 @@ from app.integrations import models as _integration_models  # noqa: F401
 from app.tiktok import models as _tiktok_models  # noqa: F401
 from app.vk import models as _vk_models  # noqa: F401
 from app.rutube import models as _rutube_models  # noqa: F401
+from app.instagram import models as _instagram_models  # noqa: F401
+from app.dzen import models as _dzen_models  # noqa: F401
 from app.readings import models as _reading_models  # noqa: F401
 from app.billing import models as _billing_models  # noqa: F401
 from app.payouts import models as _payout_models  # noqa: F401

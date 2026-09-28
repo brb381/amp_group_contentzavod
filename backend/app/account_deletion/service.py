@@ -56,6 +56,8 @@ from app.readings.revision import lock_reading_dataset_revision
 from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
 from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
 from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
+from app.instagram.models import InstagramEnrichmentJob, InstagramViewCollectionJob
+from app.dzen.models import DzenEnrichmentJob, DzenViewCollectionJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -343,6 +345,10 @@ def _soft_delete_creator_data(db: Session, blogger: User, now: datetime) -> None
             VKViewCollectionJob,
             RutubeEnrichmentJob,
             RutubeViewCollectionJob,
+            InstagramEnrichmentJob,
+            InstagramViewCollectionJob,
+            DzenEnrichmentJob,
+            DzenViewCollectionJob,
         ):
             db.execute(
                 update(job_model)

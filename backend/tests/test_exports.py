@@ -1,7 +1,7 @@
 import io
 import uuid
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import select
@@ -9,11 +9,24 @@ from sqlalchemy import select
 from app.auth.models import AccountStatus, Role, User
 from app.auth.security import hash_password
 from app.clock import utc_now
+from app.catalog.models import Brand
 from app.contracts import ExportCommand
+from app.content.models import (
+    Publication,
+    PublicationParseStatus,
+    PublicationStatus,
+    VideoCard,
+)
+from app.creators.models import CreatorProfile, SocialAccount, SocialAccountStatus
+from app.exports.data import load_data_export_rows
 from app.exports.models import ExportFormat, ExportJob, ExportType
 from app.exports.generator import generate_export, schema_for
 from app.exports.processor import cleanup_expired_artifacts, execute_export
+from app.exports.schemas import DataExportFilters
 from app.exports.storage import ArtifactDownload
+from app.platforms import Platform
+from app.readings.models import ReadingSource, ReadingStatus, ViewReading
+from app.support.models import SupportCategory, SupportMessage, SupportStatus, SupportTicket
 from app.scheduling.exports import dispatch_export
 
 
@@ -183,20 +196,239 @@ def test_general_export_validates_type_specific_filters(client):
     assert response.json()["error"]["code"] == "EXPORT_FILTER_NOT_SUPPORTED"
 
 
+def test_social_account_export_includes_non_approved_statuses(client):
+    with client.app.state.test_session() as db:
+        blogger = User(
+            email=f"social-export-{uuid.uuid4()}@example.com",
+            password_hash=hash_password(PASSWORD),
+            role=Role.BLOGGER,
+            status=AccountStatus.ACTIVE,
+            email_verified_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        db.add(blogger)
+        db.flush()
+        db.add(CreatorProfile(user_id=blogger.id, display_name="Тестовый блогер"))
+        db.add_all([
+            SocialAccount(
+                user_id=blogger.id, platform=Platform.YOUTUBE,
+                url="https://youtube.com/@pending-export", status=SocialAccountStatus.PENDING,
+            ),
+            SocialAccount(
+                user_id=blogger.id, platform=Platform.VK,
+                url="https://vk.com/video/@rejected-export", status=SocialAccountStatus.REJECTED,
+            ),
+        ])
+        db.commit()
+        rows = load_data_export_rows(
+            db,
+            export_type=ExportType.SOCIAL_ACCOUNTS,
+            filters=DataExportFilters(date_from=date(2026, 9, 1), date_to=date(2026, 9, 30)),
+        )
+
+    assert {row["status"] for row in rows} == {
+        SocialAccountStatus.PENDING, SocialAccountStatus.REJECTED,
+    }
+
+
+def test_view_reading_export_keeps_latest_row_per_publication_and_period(client):
+    with client.app.state.test_session() as db:
+        blogger = User(
+            email=f"reading-export-{uuid.uuid4()}@example.com",
+            password_hash=hash_password(PASSWORD), role=Role.BLOGGER,
+            status=AccountStatus.ACTIVE,
+            email_verified_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        db.add(blogger)
+        db.flush()
+        account = SocialAccount(
+            user_id=blogger.id, platform=Platform.YOUTUBE,
+            url=f"https://youtube.com/@reading-{uuid.uuid4()}",
+            status=SocialAccountStatus.APPROVED,
+        )
+        card = VideoCard(
+            blogger_id=blogger.id, title="Ролик для выгрузки",
+            reported_brand=Brand.AMP, reported_product_name="Тестовый товар",
+        )
+        db.add_all([account, card])
+        db.flush()
+        publication = Publication(
+            video_card_id=card.id, social_account_id=account.id,
+            platform=Platform.YOUTUBE,
+            submitted_url=f"https://youtube.com/shorts/{uuid.uuid4().hex[:11]}",
+            normalized_url=f"https://youtube.com/shorts/{uuid.uuid4().hex[:11]}",
+            external_id=uuid.uuid4().hex[:11], status=PublicationStatus.APPROVED,
+            parse_status=PublicationParseStatus.PARSED,
+        )
+        db.add(publication)
+        db.flush()
+        period = date(2026, 9, 1)
+        db.add_all([
+            ViewReading(
+                publication_id=publication.id, reporting_period=period,
+                source=ReadingSource.YOUTUBE_API, reported_value=100,
+                accepted_value=100, status=ReadingStatus.ACCEPTED,
+                risk_flags=[], idempotency_key="older",
+                captured_at=datetime(2026, 9, 10, tzinfo=timezone.utc),
+            ),
+            ViewReading(
+                publication_id=publication.id, reporting_period=period,
+                source=ReadingSource.YOUTUBE_API, reported_value=120,
+                accepted_value=None, status=ReadingStatus.PENDING,
+                risk_flags=[], idempotency_key="newer",
+                captured_at=datetime(2026, 9, 11, tzinfo=timezone.utc),
+            ),
+        ])
+        db.commit()
+        rows = load_data_export_rows(
+            db, export_type=ExportType.VIEW_READINGS,
+            filters=DataExportFilters(date_from=period, date_to=period),
+        )
+        accepted_rows = load_data_export_rows(
+            db, export_type=ExportType.VIEW_READINGS,
+            filters=DataExportFilters(date_from=period, date_to=period, status="accepted"),
+        )
+
+    assert len(rows) == 1
+    assert rows[0]["reported_value"] == 120
+    assert rows[0]["status"] == ReadingStatus.PENDING
+    assert accepted_rows == []
+
+
+def test_support_export_keeps_one_row_per_ticket(client):
+    with client.app.state.test_session() as db:
+        blogger = User(
+            email=f"support-export-blogger-{uuid.uuid4()}@example.com",
+            password_hash=hash_password(PASSWORD), role=Role.BLOGGER,
+            status=AccountStatus.ACTIVE,
+            email_verified_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        manager = User(
+            email=f"support-export-manager-{uuid.uuid4()}@example.com",
+            password_hash=hash_password(PASSWORD), role=Role.MANAGER,
+            status=AccountStatus.ACTIVE,
+            email_verified_at=datetime(2026, 9, 1, tzinfo=timezone.utc),
+        )
+        db.add_all([blogger, manager])
+        db.flush()
+        ticket = SupportTicket(
+            ticket_number=f"TEST-{uuid.uuid4().hex[:12]}", blogger_id=blogger.id,
+            category=SupportCategory.GENERAL, subject="Проверка выгрузки",
+            status=SupportStatus.IN_PROGRESS, assigned_to_user_id=manager.id,
+            creation_idempotency_key=uuid.uuid4(), creation_payload_hash="0" * 64,
+            created_at=datetime(2026, 9, 12, tzinfo=timezone.utc),
+            last_message_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+        )
+        db.add(ticket)
+        db.flush()
+        db.add_all([
+            SupportMessage(
+                ticket_id=ticket.id, author_user_id=blogger.id, author_role="blogger",
+                body="Первое сообщение", idempotency_key=uuid.uuid4(), payload_hash="1" * 64,
+                created_at=datetime(2026, 9, 13, tzinfo=timezone.utc),
+            ),
+            SupportMessage(
+                ticket_id=ticket.id, author_user_id=manager.id, author_role="manager",
+                body="Последнее сообщение", idempotency_key=uuid.uuid4(), payload_hash="2" * 64,
+                created_at=datetime(2026, 9, 14, tzinfo=timezone.utc),
+            ),
+        ])
+        db.commit()
+        rows = load_data_export_rows(
+            db, export_type=ExportType.SUPPORT_TICKETS,
+            filters=DataExportFilters(date_from=date(2026, 9, 1), date_to=date(2026, 9, 30)),
+        )
+
+    assert len(rows) == 1
+    assert rows[0]["message_count"] == 2
+    assert rows[0]["message_body"] == "Последнее сообщение"
+    assert rows[0]["message_author"] == manager.email
+
+
 def test_every_xlsx_template_is_generated_from_versioned_code(tmp_path):
     for export_type in ExportType:
-        sheet_name, columns = schema_for(export_type, 1)
-        assert sheet_name
-        assert columns
-        destination = tmp_path / f"{export_type.value}.xlsx"
-        generate_export(
-            export_type=export_type,
-            export_format=ExportFormat.XLSX,
-            schema_version=1,
-            rows=[],
-            destination=destination,
-        )
-        assert zipfile.is_zipfile(destination)
+        for schema_version in (1, 2):
+            sheet_name, columns = schema_for(export_type, schema_version)
+            assert sheet_name
+            assert columns
+            destination = tmp_path / f"{export_type.value}-v{schema_version}.xlsx"
+            generate_export(
+                export_type=export_type,
+                export_format=ExportFormat.XLSX,
+                schema_version=schema_version,
+                rows=[],
+                destination=destination,
+            )
+            assert zipfile.is_zipfile(destination)
+
+
+def test_current_export_schema_localizes_technical_values(tmp_path):
+    from openpyxl import load_workbook
+
+    destination = tmp_path / "readings.xlsx"
+    generate_export(
+        export_type=ExportType.VIEW_READINGS,
+        export_format=ExportFormat.XLSX,
+        schema_version=2,
+        rows=[{
+            "platform": "youtube",
+            "source": "youtube_api",
+            "status": "accepted",
+            "risk_flags": ["unusual_growth"],
+        }],
+        destination=destination,
+    )
+
+    sheet = load_workbook(destination, read_only=True).active
+    values = list(sheet.iter_rows(values_only=True))[1]
+    _, columns = schema_for(ExportType.VIEW_READINGS, 2)
+    row = dict(zip((column.key for column in columns), values, strict=True))
+    assert row["platform"] == "YouTube"
+    assert row["source"] == "YouTube API"
+    assert row["status"] == "Принято"
+    assert row["risk_flags"] == "Необычно быстрый рост просмотров"
+
+
+def test_current_moderation_schema_localizes_legacy_event_names(tmp_path):
+    from openpyxl import load_workbook
+
+    destination = tmp_path / "moderation.xlsx"
+    generate_export(
+        export_type=ExportType.MODERATION_HISTORY,
+        export_format=ExportFormat.XLSX,
+        schema_version=2,
+        rows=[{
+            "object_type": "publication",
+            "event_type": "publication_approve",
+            "from_status": "pending_review",
+            "to_status": "approved",
+            "changes": {"platform": "youtube"},
+        }],
+        destination=destination,
+    )
+
+    values = list(load_workbook(destination, read_only=True).active.iter_rows(values_only=True))[1]
+    _, columns = schema_for(ExportType.MODERATION_HISTORY, 2)
+    row = dict(zip((column.key for column in columns), values, strict=True))
+    assert row["object_type"] == "Публикация"
+    assert row["event_type"] == "Публикация одобрена"
+    assert row["from_status"] == "На проверке"
+    assert row["to_status"] == "Одобрено"
+    assert row["changes"] == '{"Площадка":"YouTube"}'
+
+
+def test_legacy_export_schema_keeps_original_values(tmp_path):
+    destination = tmp_path / "readings.csv"
+    generate_export(
+        export_type=ExportType.VIEW_READINGS,
+        export_format=ExportFormat.CSV,
+        schema_version=1,
+        rows=[{"platform": "youtube", "source": "youtube_api", "status": "accepted"}],
+        destination=destination,
+    )
+    content = destination.read_text(encoding="utf-8-sig")
+    assert "youtube;" in content
+    assert "youtube_api;" in content
+    assert "accepted;" in content
 
 
 def test_analyst_templates_exclude_direct_contact_bank_and_ip_fields():

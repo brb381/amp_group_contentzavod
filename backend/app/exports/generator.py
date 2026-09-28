@@ -1,13 +1,14 @@
 import csv
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Any, Literal
 
 from app.exports.models import ExportFormat, ExportType
+from app.exports.presentation import format_export_value
 from app.payouts.policy import MOSCOW
 
 
@@ -17,6 +18,7 @@ class ColumnSpec:
     title: str
     width: int
     kind: Literal["text", "money", "date", "datetime", "integer", "json"] = "text"
+    presentation: str | None = None
 
 BLOGGERS_V1 = (
     ColumnSpec("blogger_id", "ID блогера", 38), ColumnSpec("email", "Email", 32),
@@ -121,6 +123,34 @@ _SCHEMAS = {
     (ExportType.SUPPORT_TICKETS, 1): ("Обращения", SUPPORT_TICKETS_V1),
     (ExportType.AUDIT_LOG, 1): ("Журнал действий", AUDIT_LOG_V1),
 }
+_PRESENTATION_BY_KEY = {
+    "platform": "platform", "status": "status", "account_status": "status",
+    "profile_status": "status", "from_status": "status", "to_status": "status",
+    "recipient_status": "recipient", "recipient_type": "recipient", "actor_role": "role",
+    "source": "source", "availability": "availability", "risk_flags": "risks",
+    "category": "category", "object_type": "object", "event_type": "event",
+    "result": "result", "self_employment_verified": "boolean", "action": "audit_action",
+    "changes": "json", "metadata": "json",
+}
+for (export_type, version), (sheet_name, columns) in list(_SCHEMAS.items()):
+    if version == 1:
+        _SCHEMAS[(export_type, 2)] = (
+            sheet_name,
+            tuple(replace(column, presentation=_PRESENTATION_BY_KEY.get(column.key)) for column in columns),
+        )
+
+_support_sheet_name, _support_columns = _SCHEMAS[(ExportType.SUPPORT_TICKETS, 2)]
+_support_v2_columns = []
+for column in _support_columns:
+    if column.key == "message_author":
+        _support_v2_columns.append(ColumnSpec("message_count", "Сообщений", 12, "integer"))
+        column = replace(column, title="Автор последнего сообщения")
+    elif column.key == "message_body":
+        column = replace(column, title="Последнее сообщение")
+    elif column.key == "message_created_at":
+        column = replace(column, title="Дата последнего сообщения")
+    _support_v2_columns.append(column)
+_SCHEMAS[(ExportType.SUPPORT_TICKETS, 2)] = (_support_sheet_name, tuple(_support_v2_columns))
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
 _ILLEGAL_EXCEL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
 
@@ -152,6 +182,8 @@ def moscow_datetime(value: datetime | None) -> datetime | None:
 
 def _cell_value(row: dict[str, Any], column: ColumnSpec) -> Any:
     value = row.get(column.key)
+    if column.presentation:
+        value = format_export_value(column.presentation, value)
     if column.kind == "text":
         return _safe_text(value)
     if column.kind == "date":

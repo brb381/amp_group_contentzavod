@@ -17,6 +17,8 @@ not reuse the example values. At minimum set:
 - `MONITOR_SMTP_HOST`, `MONITOR_SMTP_PORT`,
   `MONITOR_SMTP_FROM_EMAIL`, and one TLS mode for operational alerts.
 - `MONITOR_ALERT_EMAIL`: an address that an operator actually checks.
+- BACKEND_IMAGE and WEB_IMAGE: immutable image references from the approved
+  release manifest, both ending in @sha256:<digest>.
 
 Set `SMTP_USERNAME`/`SMTP_PASSWORD` and their `MONITOR_` equivalents if
 the mail service requires authentication. `ENVIRONMENT=production` and
@@ -40,13 +42,27 @@ affected containers.
 
 ## Start
 
-Run from `backend/`:
+Use a protected production environment file and a release manifest containing
+the two immutable image references. On the Linux host run from backend/:
 
-```powershell
-powershell -NoProfile -File .\ops\validate_production_env.ps1
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml config --quiet
-docker compose --env-file .env -f docker-compose.yml -f docker-compose.production.yml up -d --build
-```
+~~~bash
+bash ops/deploy.sh .env release.env
+~~~
+
+The deploy script serializes deployments with flock, validates production
+secrets and image digests, pulls the exact images, waits for container health,
+checks readiness through the web proxy, and stores the accepted manifest under
+ops/releases/. It never builds application code on the production host.
+
+Rollback uses a previously accepted manifest and does not downgrade the
+database:
+
+~~~bash
+bash ops/rollback.sh .env ops/releases/20260929T120000Z.env
+~~~
+
+Every database migration shipped in a release must remain compatible with the
+immediately previous application version.
 
 For an existing PostgreSQL volume that predates the backup/monitor roles, first
 start only PostgreSQL and bootstrap roles before the full `up`:
@@ -57,9 +73,9 @@ docker compose --env-file .env -f docker-compose.yml -f docker-compose.productio
 ```
 
 The production override does not start Mailpit, does not publish MinIO ports,
-and binds the API only to `127.0.0.1:8000` (override with `API_PORT`).
+and binds the web gateway to 127.0.0.1:8080 (override with WEB_PORT).
 Configure the host reverse proxy to terminate TLS and forward to this loopback
-port. Do not expose port 8000 directly to the internet. Apply HTTPS and
+port. Do not expose the API port directly to the internet. Apply HTTPS and
 trusted-host rules at that proxy; the frontend origin and cookie settings must
 match the deployed site.
 

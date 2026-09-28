@@ -83,18 +83,25 @@ const integrationErrorLabels: Record<string, string> = {
   tiktok_response_invalid: 'TikTok вернул некорректные данные',
   vk_response_invalid: 'VK вернул некорректные данные',
   rutube_response_invalid: 'RUTUBE вернул некорректные данные',
+  instagram_response_invalid: 'Instagram не предоставил данные ролика',
+  dzen_response_invalid: 'Дзен не предоставил данные ролика',
   youtube_unreachable: 'YouTube временно недоступен', tiktok_unreachable: 'TikTok временно недоступен',
   vk_unreachable: 'VK временно недоступен', rutube_unreachable: 'RUTUBE временно недоступен',
+  instagram_unreachable: 'Instagram временно недоступен', dzen_unreachable: 'Дзен временно недоступен',
   youtube_not_found: 'Ролик YouTube не найден или недоступен',
   tiktok_not_found: 'Ролик TikTok не найден или недоступен',
   vk_not_found: 'Ролик VK не найден или недоступен',
   rutube_not_found: 'Ролик RUTUBE не найден или недоступен',
+  instagram_not_found: 'Ролик Instagram не найден или недоступен',
+  dzen_not_found: 'Ролик Дзена не найден или недоступен',
   vk_rate_limited: 'VK временно ограничил обновление данных',
   vk_api_unavailable: 'Сервис VK временно недоступен',
   youtube_video_id_mismatch: 'Получены данные другого ролика',
   tiktok_video_id_mismatch: 'Получены данные другого ролика',
   vk_video_id_mismatch: 'Получены данные другого ролика',
   rutube_video_id_mismatch: 'Получены данные другого ролика',
+  instagram_video_id_mismatch: 'Получены данные другого ролика',
+  dzen_video_id_mismatch: 'Получены данные другого ролика',
   publication_not_active: 'Публикация больше не активна', video_unavailable: 'Ролик недоступен',
   reading_period_financially_closed: 'Расчётный период уже закрыт',
   worker_lease_expired: 'Время обновления истекло, попытка будет повторена',
@@ -214,6 +221,7 @@ const apiErrorLabels: Record<string, string> = {
   publication_url_already_exists: 'Эта публикация уже добавлена',
   reading_window_closed: 'Период добавления показаний уже закрыт',
   reading_is_automatic: 'Просмотры для этой площадки обновляются автоматически',
+  view_reading_correction_no_change: 'Новое значение совпадает с уже принятым',
   no_available_balance: 'Сейчас нет доступной суммы для выплаты',
   payout_already_active: 'Заявка на выплату уже обрабатывается',
   payout_blocked_by_overdue_receipt: 'Сначала загрузите чек по предыдущей выплате',
@@ -225,6 +233,11 @@ const apiErrorLabels: Record<string, string> = {
   export_not_ready: 'Файл ещё формируется',
   support_ticket_closed: 'Обращение уже закрыто',
   invalid_or_expired_token: 'Ссылка недействительна или устарела',
+}
+
+const exportJobStatusLabels: Record<string, string> = {
+  pending: 'В очереди', queued: 'В очереди', processing: 'Формируется',
+  retry_wait: 'Повторная попытка позже', ready: 'Готово', failed: 'Ошибка', expired: 'Срок хранения истёк',
 }
 
 const lifecycleActivityLabels: Record<string, string> = {
@@ -247,6 +260,7 @@ export const documentLabel = (value: unknown) => label(documentLabels, value, '�
 export const recipientLabel = (value: unknown) => label(recipientLabels, value, 'Получатель')
 export const supportCategoryLabel = (value: unknown) => label(supportCategoryLabels, value, 'Обращение')
 export const exportTypeLabel = (value: unknown) => label(exportTypeLabels, value, 'Выгрузка данных')
+export const exportJobStatusLabel = (value: unknown) => label(exportJobStatusLabels, value, 'Статус уточняется')
 export const riskFlagLabel = (value: unknown) => label(riskFlagLabels, value, 'Требуется дополнительная проверка')
 export const exclusionReasonLabel = (value: unknown) => label(exclusionReasonLabels, value, 'Не учтено в расчёте')
 export const payoutEventLabel = (value: unknown) => label(payoutEventLabels, value, 'Статус выплаты изменён')

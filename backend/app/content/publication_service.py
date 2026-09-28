@@ -35,6 +35,8 @@ from app.readings.models import ReadingSource, ReadingStatus, ViewReading
 from app.tiktok.models import TikTokEnrichmentJob
 from app.vk.models import VKEnrichmentJob
 from app.rutube.models import RutubeEnrichmentJob
+from app.instagram.models import InstagramEnrichmentJob
+from app.dzen.models import DzenEnrichmentJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -221,7 +223,13 @@ def publication_responses_with_views(
                 | (
                     (ViewReading.status == ReadingStatus.PENDING)
                     & ViewReading.source.in_(
-                        (ReadingSource.TIKTOK_PUBLIC, ReadingSource.VK_PUBLIC, ReadingSource.RUTUBE_PUBLIC)
+                        (
+                            ReadingSource.TIKTOK_PUBLIC,
+                            ReadingSource.VK_PUBLIC,
+                            ReadingSource.RUTUBE_PUBLIC,
+                            ReadingSource.INSTAGRAM_PUBLIC,
+                            ReadingSource.DZEN_PUBLIC,
+                        )
                     )
                 )
             ),
@@ -557,6 +565,46 @@ def submit_publication(
     elif publication.platform == Platform.RUTUBE:
         publication.enrichment_status = PublicationEnrichmentStatus.FAILED
         publication.enrichment_error_code = "external_id_missing"
+    elif publication.platform == Platform.INSTAGRAM:
+        job = db.scalar(
+            select(InstagramEnrichmentJob)
+            .where(InstagramEnrichmentJob.publication_id == publication.id)
+            .with_for_update()
+        )
+        if job:
+            job.state = "pending"
+            job.attempt_count = 0
+            job.available_at = publication.submitted_at
+            job.lease_until = None
+            job.dispatch_id = None
+            job.last_error_code = None
+        else:
+            db.add(InstagramEnrichmentJob(
+                publication_id=publication.id, available_at=publication.submitted_at
+            ))
+        publication.enrichment_status = PublicationEnrichmentStatus.PENDING
+        publication.availability = PublicationAvailability.UNKNOWN
+        publication.enrichment_error_code = None
+    elif publication.platform == Platform.DZEN:
+        job = db.scalar(
+            select(DzenEnrichmentJob)
+            .where(DzenEnrichmentJob.publication_id == publication.id)
+            .with_for_update()
+        )
+        if job:
+            job.state = "pending"
+            job.attempt_count = 0
+            job.available_at = publication.submitted_at
+            job.lease_until = None
+            job.dispatch_id = None
+            job.last_error_code = None
+        else:
+            db.add(DzenEnrichmentJob(
+                publication_id=publication.id, available_at=publication.submitted_at
+            ))
+        publication.enrichment_status = PublicationEnrichmentStatus.PENDING
+        publication.availability = PublicationAvailability.UNKNOWN
+        publication.enrichment_error_code = None
     record_publication_history(
         db,
         publication,

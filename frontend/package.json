@@ -3,11 +3,15 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=22 <23"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "smoke:e2e": "node scripts/smoke.mjs"
+    "smoke:e2e": "node scripts/smoke.mjs",
+    "audit:prod": "node scripts/prod-audit.mjs"
   },
   "dependencies": {
     "lucide-react": "0.544.0",

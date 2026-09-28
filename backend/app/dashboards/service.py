@@ -55,6 +55,8 @@ from app.support.models import SupportStatus, SupportTicket
 from app.tiktok.models import TikTokEnrichmentJob, TikTokViewCollectionJob
 from app.vk.models import VKEnrichmentJob, VKViewCollectionJob
 from app.rutube.models import RutubeEnrichmentJob, RutubeViewCollectionJob
+from app.instagram.models import InstagramEnrichmentJob, InstagramViewCollectionJob
+from app.dzen.models import DzenEnrichmentJob, DzenViewCollectionJob
 from app.youtube.models import YouTubeEnrichmentJob
 
 
@@ -82,7 +84,13 @@ def _dashboard_readings(
                 | (
                     (ViewReading.status == ReadingStatus.PENDING)
                     & ViewReading.source.in_(
-                        (ReadingSource.TIKTOK_PUBLIC, ReadingSource.VK_PUBLIC, ReadingSource.RUTUBE_PUBLIC)
+                        (
+                            ReadingSource.TIKTOK_PUBLIC,
+                            ReadingSource.VK_PUBLIC,
+                            ReadingSource.RUTUBE_PUBLIC,
+                            ReadingSource.INSTAGRAM_PUBLIC,
+                            ReadingSource.DZEN_PUBLIC,
+                        )
                     )
                 )
             ),
@@ -216,7 +224,13 @@ def creator_dashboard(
     missing_manual = sum(
         1
         for item in active_publications
-        if item.platform not in {Platform.YOUTUBE, Platform.TIKTOK, Platform.VK}
+        if item.platform not in {
+            Platform.YOUTUBE,
+            Platform.TIKTOK,
+            Platform.VK,
+            Platform.INSTAGRAM,
+            Platform.DZEN,
+        }
         and item.id not in has_current_reading
     )
 
@@ -448,6 +462,10 @@ def staff_dashboard(db: Session, *, now: datetime) -> StaffDashboardResponse:
         ("vk_view_errors", VKViewCollectionJob, (VKViewCollectionJob.state == "failed",), "/staff/integrations/vk?type=views&state=failed"),
         ("rutube_enrichment_errors", RutubeEnrichmentJob, (RutubeEnrichmentJob.state == "failed",), "/staff/integrations/rutube?type=enrichment&state=failed"),
         ("rutube_view_errors", RutubeViewCollectionJob, (RutubeViewCollectionJob.state == "failed",), "/staff/integrations/rutube?type=views&state=failed"),
+        ("instagram_enrichment_errors", InstagramEnrichmentJob, (InstagramEnrichmentJob.state == "failed",), "/staff/integrations/instagram?type=enrichment&state=failed"),
+        ("instagram_view_errors", InstagramViewCollectionJob, (InstagramViewCollectionJob.state == "failed",), "/staff/integrations/instagram?type=views&state=failed"),
+        ("dzen_enrichment_errors", DzenEnrichmentJob, (DzenEnrichmentJob.state == "failed",), "/staff/integrations/dzen?type=enrichment&state=failed"),
+        ("dzen_view_errors", DzenViewCollectionJob, (DzenViewCollectionJob.state == "failed",), "/staff/integrations/dzen?type=views&state=failed"),
     ]
     queues = [
         QueueCounter(

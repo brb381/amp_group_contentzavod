@@ -87,12 +87,15 @@ class PayoutRejectionRequest(_Command):
 class PayoutPaymentRequest(_Command):
     idempotency_key: uuid.UUID
     paid_on: date
-    payment_reference: str | None = Field(default=None, max_length=255)
+    payment_reference: str = Field(min_length=1, max_length=255)
 
     @field_validator("payment_reference")
     @classmethod
-    def normalize_payment_reference(cls, value: str | None) -> str | None:
-        return _optional_text(value)
+    def normalize_payment_reference(cls, value: str) -> str:
+        normalized = _optional_text(value)
+        if normalized is None:
+            raise ValueError("payment_reference must not be blank")
+        return normalized
 
 
 class PayoutReceiptRequest(_Command):

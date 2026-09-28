@@ -1,6 +1,6 @@
 from datetime import datetime, time, timedelta, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from app.audit.models import SecurityEvent
@@ -13,7 +13,6 @@ from app.creators.models import (
     ProfileHistory,
     SocialAccount,
     SocialAccountHistory,
-    SocialAccountStatus,
 )
 from app.exports.models import ExportType
 from app.exports.schemas import DataExportFilters
@@ -105,7 +104,6 @@ def _load_social_accounts(db: Session, filters: DataExportFilters) -> list[dict]
     clauses = [
         SocialAccount.created_at >= start,
         SocialAccount.created_at < end,
-        SocialAccount.status == SocialAccountStatus.APPROVED,
         SocialAccount.deleted_at.is_(None),
     ]
     if filters.blogger_id:
@@ -179,9 +177,24 @@ def _load_publications(db: Session, filters: DataExportFilters) -> list[dict]:
 
 
 def _load_view_readings(db: Session, filters: DataExportFilters) -> list[dict]:
+    latest_reading = (
+        select(
+            ViewReading.id.label("reading_id"),
+            func.row_number().over(
+                partition_by=(ViewReading.publication_id, ViewReading.reporting_period),
+                order_by=(ViewReading.captured_at.desc(), ViewReading.id.desc()),
+            ).label("position"),
+        )
+        .where(
+            ViewReading.reporting_period >= filters.date_from,
+            ViewReading.reporting_period <= filters.date_to,
+        )
+        .subquery()
+    )
     clauses = [
         ViewReading.reporting_period >= filters.date_from,
         ViewReading.reporting_period <= filters.date_to,
+        latest_reading.c.position == 1,
     ]
     clauses.extend(_content_filters(filters))
     if filters.status:
@@ -189,6 +202,7 @@ def _load_view_readings(db: Session, filters: DataExportFilters) -> list[dict]:
     rows = _limited(
         db,
         select(ViewReading, Publication, VideoCard)
+        .join(latest_reading, latest_reading.c.reading_id == ViewReading.id)
         .join(Publication, Publication.id == ViewReading.publication_id)
         .join(VideoCard, VideoCard.id == Publication.video_card_id)
         .outerjoin(Product, Product.id == VideoCard.product_id)
@@ -318,6 +332,20 @@ def _load_support_tickets(db: Session, filters: DataExportFilters) -> list[dict]
     start, end = _utc_bounds(filters)
     assignee = aliased(User)
     author = aliased(User)
+    latest_message_id = (
+        select(SupportMessage.id)
+        .where(SupportMessage.ticket_id == SupportTicket.id)
+        .order_by(SupportMessage.created_at.desc(), SupportMessage.id.desc())
+        .limit(1)
+        .correlate(SupportTicket)
+        .scalar_subquery()
+    )
+    message_count = (
+        select(func.count(SupportMessage.id))
+        .where(SupportMessage.ticket_id == SupportTicket.id)
+        .correlate(SupportTicket)
+        .scalar_subquery()
+    )
     clauses = [SupportTicket.created_at >= start, SupportTicket.created_at < end]
     if filters.blogger_id:
         clauses.append(SupportTicket.blogger_id == filters.blogger_id)
@@ -331,18 +359,14 @@ def _load_support_tickets(db: Session, filters: DataExportFilters) -> list[dict]
             assignee.email,
             SupportMessage,
             author.email,
+            message_count.label("message_count"),
         )
         .outerjoin(CreatorProfile, CreatorProfile.user_id == SupportTicket.blogger_id)
         .outerjoin(assignee, assignee.id == SupportTicket.assigned_to_user_id)
-        .outerjoin(SupportMessage, SupportMessage.ticket_id == SupportTicket.id)
+        .outerjoin(SupportMessage, SupportMessage.id == latest_message_id)
         .outerjoin(author, author.id == SupportMessage.author_user_id)
         .where(*clauses)
-        .order_by(
-            SupportTicket.created_at,
-            SupportTicket.id,
-            SupportMessage.created_at,
-            SupportMessage.id,
-        ),
+        .order_by(SupportTicket.created_at, SupportTicket.id),
     )
     return [
         {
@@ -354,6 +378,7 @@ def _load_support_tickets(db: Session, filters: DataExportFilters) -> list[dict]
             "subject": ticket.subject,
             "status": ticket.status,
             "assigned_to": assigned_to,
+            "message_count": message_count,
             "message_author": message_author,
             "message_body": message.body if message else None,
             "message_created_at": message.created_at if message else None,
@@ -362,7 +387,7 @@ def _load_support_tickets(db: Session, filters: DataExportFilters) -> list[dict]
             "resolved_at": ticket.resolved_at,
             "closed_at": ticket.closed_at,
         }
-        for ticket, profile, assigned_to, message, message_author in rows
+        for ticket, profile, assigned_to, message, message_author, message_count in rows
     ]
 
 

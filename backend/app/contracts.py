@@ -16,6 +16,12 @@ VK_VIEWS_TASK = "vk.collect_views"
 RUTUBE_QUEUE = "rutube"
 RUTUBE_TASK = "rutube.enrich_publication"
 RUTUBE_VIEWS_TASK = "rutube.collect_views"
+INSTAGRAM_QUEUE = "instagram"
+INSTAGRAM_TASK = "instagram.enrich_publication"
+INSTAGRAM_VIEWS_TASK = "instagram.collect_views"
+DZEN_QUEUE = "dzen"
+DZEN_TASK = "dzen.enrich_publication"
+DZEN_VIEWS_TASK = "dzen.collect_views"
 CALCULATIONS_QUEUE = "calculations"
 CALCULATION_TASK = "calculations.build_period"
 EXPORTS_QUEUE = "exports"
@@ -98,6 +104,32 @@ class RutubeEnrichmentCommand(BaseModel):
 
 
 class RutubeViewCollectionCommand(RutubeEnrichmentCommand):
+    pass
+
+
+class InstagramEnrichmentCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatch_id: uuid.UUID
+    job_id: uuid.UUID
+    publication_id: uuid.UUID
+    source_url: str = Field(min_length=1, max_length=2048)
+
+
+class InstagramViewCollectionCommand(InstagramEnrichmentCommand):
+    pass
+
+
+class DzenEnrichmentCommand(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dispatch_id: uuid.UUID
+    job_id: uuid.UUID
+    publication_id: uuid.UUID
+    source_url: str = Field(min_length=1, max_length=2048)
+
+
+class DzenViewCollectionCommand(DzenEnrichmentCommand):
     pass
 
 

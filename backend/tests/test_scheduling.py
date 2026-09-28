@@ -1,3 +1,4 @@
+import smtplib
 import uuid
 from datetime import timedelta
 
@@ -5,7 +6,7 @@ from sqlalchemy import select
 
 from app.clock import utc_now
 from app.contracts import EmailDeliveryCommand
-from app.email.service import execute_email_delivery, next_retry_at
+from app.email.service import MAX_EMAIL_DELIVERY_ATTEMPTS, execute_email_delivery, next_retry_at
 from app.outbox.models import OutboxEvent
 from app.scheduler import run_iteration
 from app.scheduling.email import dispatch_email_events
@@ -106,3 +107,84 @@ def test_email_retry_delay_is_bounded():
     assert next_retry_at(now, 0) == now + timedelta(minutes=1)
     assert next_retry_at(now, 8) == now + timedelta(minutes=8)
     assert next_retry_at(now, 100) == now + timedelta(minutes=30)
+
+
+def _processing_email_event(session_factory, *, attempt_count: int = 1):
+    dispatch_id = uuid.uuid4()
+    event = OutboxEvent(
+        event_type="email_delivery_requested",
+        payload={"recipient": "delivery@example.com", "subject": "Subject", "body": "Body"},
+        state="processing",
+        attempt_count=attempt_count,
+        processing_until=utc_now() + timedelta(minutes=5),
+        dispatch_id=dispatch_id,
+    )
+    with session_factory() as db:
+        db.add(event)
+        db.commit()
+        return event.id, dispatch_id
+
+
+def _delivery_command(event_id, dispatch_id):
+    return EmailDeliveryCommand(
+        event_id=event_id,
+        dispatch_id=dispatch_id,
+        recipient="delivery@example.com",
+        subject="Subject",
+        body="Body",
+    )
+
+
+def test_email_worker_marks_permanent_smtp_failure_terminal(client):
+    session_factory = client.app.state.test_session
+    event_id, dispatch_id = _processing_email_event(session_factory)
+
+    def reject(_command):
+        raise smtplib.SMTPDataError(550, b"message rejected")
+
+    execute_email_delivery(
+        _delivery_command(event_id, dispatch_id),
+        session_factory=session_factory,
+        sender=reject,
+    )
+
+    with session_factory() as db:
+        stored = db.get(OutboxEvent, event_id)
+        assert stored.state == "failed"
+        assert stored.failed_at is not None
+        assert stored.last_error == "smtp_permanent_550"
+
+
+def test_email_worker_retries_transient_failure_until_limit(client):
+    session_factory = client.app.state.test_session
+    event_id, dispatch_id = _processing_email_event(session_factory, attempt_count=1)
+
+    def unavailable(_command):
+        raise ConnectionError("SMTP unavailable")
+
+    execute_email_delivery(
+        _delivery_command(event_id, dispatch_id),
+        session_factory=session_factory,
+        sender=unavailable,
+    )
+
+    with session_factory() as db:
+        stored = db.get(OutboxEvent, event_id)
+        assert stored.state == "pending"
+        assert stored.failed_at is None
+        assert stored.last_error == "ConnectionError"
+
+    final_event_id, final_dispatch_id = _processing_email_event(
+        session_factory, attempt_count=MAX_EMAIL_DELIVERY_ATTEMPTS
+    )
+    execute_email_delivery(
+        _delivery_command(final_event_id, final_dispatch_id),
+        session_factory=session_factory,
+        sender=unavailable,
+    )
+
+    with session_factory() as db:
+        stored = db.get(OutboxEvent, final_event_id)
+        assert stored.state == "failed"
+        assert stored.failed_at is not None
+        assert stored.last_error == "ConnectionError"

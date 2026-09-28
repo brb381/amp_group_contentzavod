@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.ci.example
 
 # Python build and test output
 __pycache__/

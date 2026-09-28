@@ -1,7 +1,14 @@
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
       POSTGRES_USER: ${DB_MIGRATION_USER:?DB_MIGRATION_USER is required}
@@ -13,6 +20,8 @@ services:
       DB_TIKTOK_WORKER_PASSWORD: ${DB_TIKTOK_WORKER_PASSWORD:?DB_TIKTOK_WORKER_PASSWORD is required}
       DB_VK_WORKER_PASSWORD: ${DB_VK_WORKER_PASSWORD:?DB_VK_WORKER_PASSWORD is required}
       DB_RUTUBE_WORKER_PASSWORD: ${DB_RUTUBE_WORKER_PASSWORD:?DB_RUTUBE_WORKER_PASSWORD is required}
+      DB_INSTAGRAM_WORKER_PASSWORD: ${DB_INSTAGRAM_WORKER_PASSWORD:?DB_INSTAGRAM_WORKER_PASSWORD is required}
+      DB_DZEN_WORKER_PASSWORD: ${DB_DZEN_WORKER_PASSWORD:?DB_DZEN_WORKER_PASSWORD is required}
       DB_CALCULATION_WORKER_PASSWORD: ${DB_CALCULATION_WORKER_PASSWORD:?DB_CALCULATION_WORKER_PASSWORD is required}
       DB_EXPORT_WORKER_PASSWORD: ${DB_EXPORT_WORKER_PASSWORD:?DB_EXPORT_WORKER_PASSWORD is required}
       DB_RETENTION_WORKER_PASSWORD: ${DB_RETENTION_WORKER_PASSWORD:?DB_RETENTION_WORKER_PASSWORD is required}
@@ -29,8 +38,21 @@ services:
       - ./docker/postgres:/docker-entrypoint-initdb.d:ro
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
     restart: unless-stopped
+    logging: *default-logging
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -38,7 +60,7 @@ services:
       retries: 20
 
   runtime-roles:
-    image: postgres:17-alpine
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
     command: sh /scripts/10-runtime-roles.sh
     environment:
       PGHOST: postgres
@@ -53,6 +75,8 @@ services:
       DB_TIKTOK_WORKER_PASSWORD: ${DB_TIKTOK_WORKER_PASSWORD:?DB_TIKTOK_WORKER_PASSWORD is required}
       DB_VK_WORKER_PASSWORD: ${DB_VK_WORKER_PASSWORD:?DB_VK_WORKER_PASSWORD is required}
       DB_RUTUBE_WORKER_PASSWORD: ${DB_RUTUBE_WORKER_PASSWORD:?DB_RUTUBE_WORKER_PASSWORD is required}
+      DB_INSTAGRAM_WORKER_PASSWORD: ${DB_INSTAGRAM_WORKER_PASSWORD:?DB_INSTAGRAM_WORKER_PASSWORD is required}
+      DB_DZEN_WORKER_PASSWORD: ${DB_DZEN_WORKER_PASSWORD:?DB_DZEN_WORKER_PASSWORD is required}
       DB_CALCULATION_WORKER_PASSWORD: ${DB_CALCULATION_WORKER_PASSWORD:?DB_CALCULATION_WORKER_PASSWORD is required}
       DB_EXPORT_WORKER_PASSWORD: ${DB_EXPORT_WORKER_PASSWORD:?DB_EXPORT_WORKER_PASSWORD is required}
       DB_RETENTION_WORKER_PASSWORD: ${DB_RETENTION_WORKER_PASSWORD:?DB_RETENTION_WORKER_PASSWORD is required}
@@ -66,9 +90,10 @@ services:
         condition: service_healthy
 
   minio:
-    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z@sha256:d249d1fb6966de4d8ad26c04754b545205ff15a62e4fd19ebd0f26fa5baacbc0
     command: server /data --console-address ":9001"
     restart: unless-stopped
+    logging: *default-logging
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
@@ -79,7 +104,7 @@ services:
       - "9001:9001"
 
   minio-init:
-    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
+    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z@sha256:fb8f773eac8ef9d6da0486d5dec2f42f219358bcb8de579d1623d518c9ebd4cc
     entrypoint: ["/bin/sh", "/config/bootstrap.sh"]
     environment:
       MINIO_ENDPOINT: http://minio:9000
@@ -99,8 +124,9 @@ services:
       - minio
 
   mailpit:
-    image: axllent/mailpit:v1.27
+    image: axllent/mailpit:v1.27@sha256:e22dce5b36f93c77082e204a3942fb6b283b7896e057458400a4c88344c3df68
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "8025:8025"
 
@@ -121,6 +147,7 @@ services:
       target: runtime
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     restart: unless-stopped
+    logging: *default-logging
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-development}
       DATABASE_URL: postgresql+psycopg://amp_api:${DB_API_PASSWORD}@postgres:5432/${POSTGRES_DB}
@@ -155,6 +182,7 @@ services:
       target: runtime
     command: celery -A app.email_worker:celery_app worker -Q email --concurrency=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_email_worker:${DB_EMAIL_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -180,6 +208,7 @@ services:
       target: runtime
     command: celery -A app.youtube_worker:celery_app worker -Q youtube --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_youtube_worker:${DB_YOUTUBE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -200,6 +229,7 @@ services:
       target: runtime
     command: celery -A app.tiktok_worker:celery_app worker -Q tiktok --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_tiktok_worker:${DB_TIKTOK_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -219,6 +249,7 @@ services:
       target: runtime
     command: celery -A app.vk_worker:celery_app worker -Q vk --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_vk_worker:${DB_VK_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -238,10 +269,51 @@ services:
       target: runtime
     command: celery -A app.rutube_worker:celery_app worker -Q rutube --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_rutube_worker:${DB_RUTUBE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       RUTUBE_REQUEST_TIMEOUT_SECONDS: ${RUTUBE_REQUEST_TIMEOUT_SECONDS:-15}
+      SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  instagram-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.instagram_worker:celery_app worker -Q instagram --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_instagram_worker:${DB_INSTAGRAM_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      INSTAGRAM_REQUEST_TIMEOUT_SECONDS: ${INSTAGRAM_REQUEST_TIMEOUT_SECONDS:-15}
+      SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  dzen-worker:
+    build:
+      context: .
+      target: runtime
+    command: celery -A app.dzen_worker:celery_app worker -Q dzen --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
+    restart: unless-stopped
+    logging: *default-logging
+    environment:
+      DATABASE_URL: postgresql+psycopg://amp_dzen_worker:${DB_DZEN_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379/0
+      DZEN_REQUEST_TIMEOUT_SECONDS: ${DZEN_REQUEST_TIMEOUT_SECONDS:-15}
       SUSPICIOUS_MONTHLY_VIEW_GROWTH: "500000"
     depends_on:
       migrate:
@@ -257,6 +329,7 @@ services:
       target: runtime
     command: celery -A app.calculation_worker:celery_app worker -Q calculations --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_calculation_worker:${DB_CALCULATION_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -274,6 +347,7 @@ services:
       target: runtime
     command: celery -A app.lifecycle_worker:celery_app worker -Q lifecycle --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_lifecycle_worker:${DB_LIFECYCLE_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -291,6 +365,7 @@ services:
       target: runtime
     command: celery -A app.export_worker:celery_app worker -Q exports --concurrency=1 --prefetch-multiplier=1 --loglevel=INFO
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_export_worker:${DB_EXPORT_WORKER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -317,6 +392,7 @@ services:
       target: runtime
     command: python -m app.scheduler
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_scheduler:${DB_SCHEDULER_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
@@ -337,12 +413,15 @@ services:
       target: runtime
     command: python -m app.monitor
     restart: unless-stopped
+    logging: *default-logging
     environment:
       DATABASE_URL: postgresql+psycopg://amp_monitor:${DB_MONITOR_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       API_READINESS_URL: http://api:8000/health/ready
       MONITOR_ALERT_EMAIL: ${MONITOR_ALERT_EMAIL:?MONITOR_ALERT_EMAIL is required}
       MONITOR_POLL_SECONDS: ${MONITOR_POLL_SECONDS:-30}
+      MONITOR_MIN_DISK_FREE_PERCENT: ${MONITOR_MIN_DISK_FREE_PERCENT:-15}
+      MONITOR_FINANCIAL_RECONCILIATION_SECONDS: ${MONITOR_FINANCIAL_RECONCILIATION_SECONDS:-3600}
       MONITOR_METRICS_PORT: "9101"
       SMTP_HOST: ${MONITOR_SMTP_HOST:-mailpit}
       SMTP_PORT: ${MONITOR_SMTP_PORT:-1025}
@@ -472,4 +551,5 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:
   minio_data:

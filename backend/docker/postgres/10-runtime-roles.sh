@@ -9,6 +9,8 @@ DB_YOUTUBE_WORKER_PASSWORD
 DB_TIKTOK_WORKER_PASSWORD
 DB_VK_WORKER_PASSWORD
 DB_RUTUBE_WORKER_PASSWORD
+DB_INSTAGRAM_WORKER_PASSWORD
+DB_DZEN_WORKER_PASSWORD
 DB_CALCULATION_WORKER_PASSWORD
 DB_EXPORT_WORKER_PASSWORD
 DB_RETENTION_WORKER_PASSWORD
@@ -37,6 +39,8 @@ psql \
     --set=tiktok_worker_password="$DB_TIKTOK_WORKER_PASSWORD" \
     --set=vk_worker_password="$DB_VK_WORKER_PASSWORD" \
     --set=rutube_worker_password="$DB_RUTUBE_WORKER_PASSWORD" \
+    --set=instagram_worker_password="$DB_INSTAGRAM_WORKER_PASSWORD" \
+    --set=dzen_worker_password="$DB_DZEN_WORKER_PASSWORD" \
     --set=calculation_worker_password="$DB_CALCULATION_WORKER_PASSWORD" \
     --set=export_worker_password="$DB_EXPORT_WORKER_PASSWORD" \
     --set=retention_worker_password="$DB_RETENTION_WORKER_PASSWORD" \
@@ -133,6 +137,30 @@ SELECT format(
 \gexec
 
 SELECT format(
+    'CREATE ROLE amp_instagram_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'instagram_worker_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_instagram_worker')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_instagram_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'instagram_worker_password'
+)
+\gexec
+
+SELECT format(
+    'CREATE ROLE amp_dzen_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'dzen_worker_password'
+)
+WHERE NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'amp_dzen_worker')
+\gexec
+SELECT format(
+    'ALTER ROLE amp_dzen_worker WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
+    :'dzen_worker_password'
+)
+\gexec
+
+SELECT format(
     'CREATE ROLE amp_calculation_worker LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
     :'calculation_worker_password'
 )
@@ -214,6 +242,8 @@ SELECT format('REVOKE %I FROM %I', granted.rolname, member.rolname)
     'amp_tiktok_worker',
     'amp_vk_worker',
     'amp_rutube_worker',
+    'amp_instagram_worker',
+    'amp_dzen_worker',
     'amp_calculation_worker',
     'amp_export_worker',
     'amp_retention_worker',
@@ -226,4 +256,5 @@ SELECT format('REVOKE %I FROM %I', granted.rolname, member.rolname)
 GRANT pg_read_all_data TO amp_backup;
 SELECT format('GRANT CONNECT ON DATABASE %I TO amp_backup', current_database())
 \gexec
+
 SQL

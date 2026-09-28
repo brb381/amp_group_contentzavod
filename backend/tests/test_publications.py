@@ -57,6 +57,8 @@ from app.rutube.schemas import RutubeVideo
 from app.rutube.service import execute_rutube_enrichment
 from app.rutube.views import execute_rutube_view_collection
 from app.rutube_config import RutubeWorkerSettings
+from app.instagram.models import InstagramEnrichmentJob
+from app.dzen.models import DzenEnrichmentJob
 from app.legal.models import AcceptanceMethod, LegalAcceptance, LegalDocument
 
 
@@ -907,6 +909,47 @@ def _submitted_tiktok_publication(client, suffix: str) -> dict:
     return submitted.json()
 
 
+@pytest.mark.parametrize(
+    ("platform", "url", "job_model"),
+    (
+        (
+            Platform.INSTAGRAM,
+            "https://www.instagram.com/reel/ABC_123/",
+            InstagramEnrichmentJob,
+        ),
+        (
+            Platform.DZEN,
+            "https://dzen.ru/video/watch/abc123",
+            DzenEnrichmentJob,
+        ),
+    ),
+)
+def test_public_platform_submission_creates_enrichment_job(
+    client, platform, url, job_model
+):
+    blogger = create_blogger(client, f"{platform.value}-worker@example.com")
+    account = create_social_account(client, blogger.id, platform=platform)
+    login(client, blogger.email)
+    card = create_card(client, title=platform.value)
+    publication = create_publication(client, card["id"], account.id, url)
+
+    submitted = client.post(
+        f"/api/v1/me/publications/{publication['id']}/submissions",
+        headers=csrf_headers(client),
+    )
+
+    assert submitted.status_code == 201
+    assert submitted.json()["enrichment_status"] == "pending"
+    with client.app.state.test_session() as db:
+        job = db.scalar(
+            select(job_model).where(
+                job_model.publication_id == uuid.UUID(publication["id"])
+            )
+        )
+        assert job is not None
+        assert job.state == "pending"
+
+
 def test_tiktok_scheduler_and_worker_apply_public_metadata(client):
     publication = _submitted_tiktok_publication(client, "01")
     producer = CapturingProducer()
@@ -1595,6 +1638,66 @@ def test_manual_view_reading_can_be_edited_and_corrected(client, monkeypatch):
     )
     assert recorrected.status_code == 200, recorrected.text
     assert recorrected.json()["accepted_value"] == 114000
+
+    unchanged = client.post(
+        f"/api/v1/moderation/view-readings/{reading['id']}/corrections",
+        json={"accepted_value": 114000, "reason": "No actual change"},
+        headers=csrf_headers(client),
+    )
+    assert unchanged.status_code == 409
+    assert unchanged.json()["error"]["code"] == "VIEW_READING_CORRECTION_NO_CHANGE"
+
+
+def test_view_reading_lists_filter_instagram_and_dzen_server_side(client):
+    blogger = create_blogger(client, "platform-reading-filter@example.com")
+    login(client, blogger.email)
+    publications = {}
+    for platform, url in (
+        (Platform.INSTAGRAM, "https://instagram.com/reel/filter-instagram"),
+        (Platform.DZEN, "https://dzen.ru/video/watch/filter-dzen"),
+    ):
+        account = create_social_account(client, blogger.id, platform=platform)
+        card = create_card(client, title=f"{platform.value} filtered reading")
+        publication = create_publication(client, card["id"], account.id, url)
+        publications[platform] = publication
+
+    with client.app.state.test_session() as db:
+        for index, (platform, publication) in enumerate(publications.items()):
+            stored = db.get(Publication, uuid.UUID(publication["id"]))
+            stored.status = PublicationStatus.APPROVED
+            stored.external_title = f"{platform.value} publication"
+            db.add(
+                ViewReading(
+                    publication_id=stored.id,
+                    reporting_period=date(2026, 8, 1),
+                    source=(
+                        ReadingSource.INSTAGRAM_PUBLIC
+                        if platform == Platform.INSTAGRAM
+                        else ReadingSource.DZEN_PUBLIC
+                    ),
+                    reported_value=100 + index,
+                    accepted_value=None,
+                    status=ReadingStatus.PENDING,
+                    risk_flags=[],
+                    idempotency_key=f"platform-filter-{platform.value}",
+                    captured_at=datetime(2026, 8, 10, 10 + index, tzinfo=timezone.utc),
+                )
+            )
+        db.commit()
+
+    mine = client.get("/api/v1/me/view-readings?platform=instagram")
+    assert mine.status_code == 200, mine.text
+    assert mine.json()["total_items"] == 1
+    assert [item["platform"] for item in mine.json()["items"]] == ["instagram"]
+
+    moderator = create_moderator(client, "platform-reading-filter-moderator@example.com")
+    login(client, moderator.email)
+    queue = client.get(
+        "/api/v1/moderation/view-readings?platform=dzen&allStatuses=true"
+    )
+    assert queue.status_code == 200, queue.text
+    assert queue.json()["total_items"] == 1
+    assert [item["platform"] for item in queue.json()["items"]] == ["dzen"]
 
 
 def test_youtube_view_scheduler_and_worker_store_two_hour_readings(client):

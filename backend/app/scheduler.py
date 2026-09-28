@@ -13,6 +13,8 @@ from app.scheduling.youtube import dispatch_youtube_batch, dispatch_youtube_view
 from app.scheduling.tiktok import dispatch_tiktok_enrichment, dispatch_tiktok_view
 from app.scheduling.vk import dispatch_vk_enrichment, dispatch_vk_view
 from app.scheduling.rutube import dispatch_rutube_enrichment, dispatch_rutube_view
+from app.scheduling.instagram import dispatch_instagram_enrichment, dispatch_instagram_view
+from app.scheduling.dzen import dispatch_dzen_enrichment, dispatch_dzen_view
 from app.scheduling.exports import dispatch_export
 from app.scheduling.lifecycle import dispatch_lifecycle
 
@@ -42,6 +44,10 @@ def run_iteration(
             ("vk", dispatch_vk_enrichment),
             ("rutube-views", dispatch_rutube_view),
             ("rutube", dispatch_rutube_enrichment),
+            ("instagram-views", dispatch_instagram_view),
+            ("instagram", dispatch_instagram_enrichment),
+            ("dzen-views", dispatch_dzen_view),
+            ("dzen", dispatch_dzen_enrichment),
         )
     )
     outcomes: dict[str, bool] = {}

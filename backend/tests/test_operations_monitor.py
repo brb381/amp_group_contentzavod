@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, text
 
 from app import health, monitor
+from app.billing.reconciliation import reconcile_finances
 from app.scheduler import run_iteration
 from app.outbox.models import OutboxEvent
 from app.scheduling.email import dispatch_email_events
@@ -102,6 +103,86 @@ def test_alerts_only_on_change_and_reminder(monkeypatch):
     state.process(settings, {"api": "down"}, now + timedelta(hours=1))
     state.process(settings, {}, now + timedelta(hours=1, minutes=1))
     assert sent == [{"api": "down"}, {"api": "down"}, {}]
+
+
+def test_monitor_alerts_when_disk_free_space_is_below_threshold(monkeypatch):
+    class Usage:
+        total = 100
+        free = 9
+
+    monkeypatch.setattr(monitor.shutil, "disk_usage", lambda _path: Usage())
+    settings = monitor.MonitorSettings(
+        database_url="postgresql+psycopg://monitor:password@localhost/amp",
+        redis_url="redis://localhost:6379/0",
+        monitor_alert_email="ops@example.test",
+        smtp_host="localhost",
+        smtp_from_email="amp@example.test",
+        monitor_min_disk_free_percent=15,
+    )
+
+    assert monitor._disk_issues(settings) == {
+        "disk": "free space 9.0% is below 15%"
+    }
+
+
+def test_financial_reconciliation_detects_ledger_and_reserve_mismatches():
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE creator_balances (blogger_id TEXT PRIMARY KEY, "
+            "available_kopecks INTEGER NOT NULL, reserved_kopecks INTEGER NOT NULL, "
+            "paid_kopecks INTEGER NOT NULL)"
+        ))
+        connection.execute(text(
+            "CREATE TABLE balance_ledger (blogger_id TEXT NOT NULL, "
+            "available_delta_kopecks INTEGER NOT NULL, reserved_delta_kopecks INTEGER NOT NULL, "
+            "paid_delta_kopecks INTEGER NOT NULL)"
+        ))
+        connection.execute(text(
+            "CREATE TABLE payout_requests (blogger_id TEXT NOT NULL, "
+            "amount_kopecks INTEGER NOT NULL, status TEXT NOT NULL)"
+        ))
+        connection.execute(text(
+            "INSERT INTO creator_balances VALUES ('ok', 500, 100, 100), ('broken', 1, 50, 0)"
+        ))
+        connection.execute(text(
+            "INSERT INTO balance_ledger VALUES "
+            "('ok', 700, 0, 0), ('ok', -200, 200, 0), ('ok', 0, -100, 100), "
+            "('broken', 2, 0, 0), ('missing-balance', 10, 0, 0)"
+        ))
+        connection.execute(text(
+            "INSERT INTO payout_requests VALUES "
+            "('ok', 100, 'approved'), ('broken', 40, 'requested')"
+        ))
+
+        result = reconcile_finances(connection)
+
+    engine.dispose()
+    assert result.ledger_mismatches == 2
+    assert result.payout_reserve_mismatches == 1
+    assert not result.is_consistent
+
+
+def test_financial_monitor_reuses_result_until_interval_expires(monkeypatch):
+    calls = []
+
+    class Result:
+        ledger_mismatches = 1
+        payout_reserve_mismatches = 0
+
+    monkeypatch.setattr(
+        monitor,
+        "reconcile_finances",
+        lambda _connection: calls.append("checked") or Result(),
+    )
+    check = monitor.FinancialCheck()
+    now = datetime.now(timezone.utc)
+
+    expected = {"finance:ledger": "1 balance snapshots do not match ledger"}
+    assert check.collect(object(), now, 3600) == expected
+    assert check.collect(object(), now + timedelta(minutes=10), 3600) == expected
+    assert check.collect(object(), now + timedelta(hours=1), 3600) == expected
+    assert calls == ["checked", "checked"]
 
 
 def test_job_counts_are_scoped_to_due_and_recent_rows():

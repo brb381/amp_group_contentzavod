@@ -563,7 +563,7 @@ def create_my_payout_request(
     )
     db.add(payout)
     try:
-        db.flush([payout])
+        db.flush()
     except IntegrityError as error:
         return _recover_command_integrity(
             db,

@@ -13,6 +13,8 @@ RUNTIME_ROLES = {
     "amp_tiktok_worker",
     "amp_vk_worker",
     "amp_rutube_worker",
+    "amp_instagram_worker",
+    "amp_dzen_worker",
     "amp_calculation_worker",
     "amp_export_worker",
     "amp_retention_worker",
@@ -162,6 +164,8 @@ def test_default_table_privileges_only_include_the_api(postgres_connection):
         ("amp_tiktok_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
         ("amp_vk_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
         ("amp_rutube_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
+        ("amp_instagram_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
+        ("amp_dzen_worker", "publications", {"SELECT", "UPDATE"}, {"INSERT", "DELETE"}),
         (
             "amp_tiktok_worker",
             "tiktok_view_collection_jobs",
@@ -177,6 +181,18 @@ def test_default_table_privileges_only_include_the_api(postgres_connection):
         (
             "amp_rutube_worker",
             "rutube_view_collection_jobs",
+            {"SELECT", "UPDATE"},
+            {"INSERT", "DELETE"},
+        ),
+        (
+            "amp_instagram_worker",
+            "instagram_view_collection_jobs",
+            {"SELECT", "UPDATE"},
+            {"INSERT", "DELETE"},
+        ),
+        (
+            "amp_dzen_worker",
+            "dzen_view_collection_jobs",
             {"SELECT", "UPDATE"},
             {"INSERT", "DELETE"},
         ),
@@ -201,6 +217,18 @@ def test_default_table_privileges_only_include_the_api(postgres_connection):
         (
             "amp_scheduler",
             "tiktok_view_collection_jobs",
+            {"SELECT", "INSERT", "UPDATE"},
+            {"DELETE"},
+        ),
+        (
+            "amp_scheduler",
+            "instagram_view_collection_jobs",
+            {"SELECT", "INSERT", "UPDATE"},
+            {"DELETE"},
+        ),
+        (
+            "amp_scheduler",
+            "dzen_view_collection_jobs",
             {"SELECT", "INSERT", "UPDATE"},
             {"DELETE"},
         ),
@@ -310,10 +338,11 @@ def test_lifecycle_worker_can_only_expire_the_balance_claim(postgres_connection)
         "amp_tiktok_worker",
         "amp_vk_worker",
         "amp_rutube_worker",
+        "amp_instagram_worker",
+        "amp_dzen_worker",
         "amp_calculation_worker",
         "amp_scheduler",
         "amp_lifecycle_worker",
-        "amp_monitor",
     ],
 )
 @pytest.mark.parametrize(
@@ -347,6 +376,12 @@ def test_workers_cannot_read_unrelated_identity_data(postgres_connection):
     )
     assert not _has_table_privilege(
         postgres_connection, "amp_rutube_worker", "users", "SELECT"
+    )
+    assert not _has_table_privilege(
+        postgres_connection, "amp_instagram_worker", "users", "SELECT"
+    )
+    assert not _has_table_privilege(
+        postgres_connection, "amp_dzen_worker", "users", "SELECT"
     )
     assert not _has_table_privilege(
         postgres_connection, "amp_calculation_worker", "users", "SELECT"
@@ -509,7 +544,7 @@ def test_backup_role_is_read_only_and_has_one_builtin_membership(postgres_connec
         for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE"):
             assert not _has_table_privilege(postgres_connection, "amp_backup", table, privilege)
 
-def test_monitor_can_only_read_job_state(postgres_connection):
+def test_monitor_can_only_read_operational_state(postgres_connection):
     from app.monitor import JOB_SPECS
 
     for spec in JOB_SPECS:
@@ -518,7 +553,13 @@ def test_monitor_can_only_read_job_state(postgres_connection):
             assert not _has_table_privilege(
                 postgres_connection, "amp_monitor", spec.table, privilege
             )
-    for table in ("payout_requests", "users", "alembic_version"):
+    for table in ("creator_balances", "balance_ledger", "payout_requests"):
+        assert _has_table_privilege(postgres_connection, "amp_monitor", table, "SELECT")
+        for privilege in ("INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"):
+            assert not _has_table_privilege(
+                postgres_connection, "amp_monitor", table, privilege
+            )
+    for table in ("users", "alembic_version", "payout_events", "payout_event_details"):
         assert not _has_table_privilege(postgres_connection, "amp_monitor", table, "SELECT")
     assert postgres_connection.scalar(
         text("SELECT has_schema_privilege('amp_monitor', 'public', 'USAGE')")

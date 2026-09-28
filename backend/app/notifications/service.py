@@ -106,7 +106,7 @@ def create_notification(db: Session, command: NotificationCommand) -> Notificati
     try:
         with db.begin_nested():
             db.add(notification)
-            db.flush([notification])
+            db.flush()
     except IntegrityError:
         existing = db.scalar(
             select(Notification).where(
