@@ -53,12 +53,40 @@ jobs:
             ghcr.io/${{ steps.names.outputs.repository }}/web:${{ github.ref_name }}
             ghcr.io/${{ steps.names.outputs.repository }}/web:sha-${{ github.sha }}
 
+      - name: Build and publish MinIO
+        id: minio
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/docker/minio
+          target: server
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/${{ steps.names.outputs.repository }}/minio:${{ github.ref_name }}
+            ghcr.io/${{ steps.names.outputs.repository }}/minio:sha-${{ github.sha }}
+
+      - name: Build and publish MinIO Client
+        id: minio_mc
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/docker/minio
+          target: client
+          push: true
+          provenance: mode=max
+          sbom: true
+          tags: |
+            ghcr.io/${{ steps.names.outputs.repository }}/minio-mc:${{ github.ref_name }}
+            ghcr.io/${{ steps.names.outputs.repository }}/minio-mc:sha-${{ github.sha }}
+
       - name: Create immutable release manifest
         shell: bash
         run: |
           {
             echo "BACKEND_IMAGE=ghcr.io/${{ steps.names.outputs.repository }}/backend@${{ steps.backend.outputs.digest }}"
             echo "WEB_IMAGE=ghcr.io/${{ steps.names.outputs.repository }}/web@${{ steps.web.outputs.digest }}"
+            echo "MINIO_IMAGE=ghcr.io/${{ steps.names.outputs.repository }}/minio@${{ steps.minio.outputs.digest }}"
+            echo "MINIO_MC_IMAGE=ghcr.io/${{ steps.names.outputs.repository }}/minio-mc@${{ steps.minio_mc.outputs.digest }}"
             echo "RELEASE_GIT_SHA=${{ github.sha }}"
             echo "RELEASE_TAG=${{ github.ref_name }}"
           } > release.env

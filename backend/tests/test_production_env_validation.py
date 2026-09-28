@@ -16,6 +16,8 @@ def valid_environment() -> dict[str, str]:
             "FRONTEND_URL": "https://content.example.com",
             "BACKEND_IMAGE": "registry.example.com/amp/backend@sha256:" + "a" * 64,
             "WEB_IMAGE": "registry.example.com/amp/web@sha256:" + "b" * 64,
+            "MINIO_IMAGE": "registry.example.com/amp/minio@sha256:" + "c" * 64,
+            "MINIO_MC_IMAGE": "registry.example.com/amp/minio-mc@sha256:" + "d" * 64,
             "SMTP_HOST": "smtp.example.com",
             "SMTP_USE_TLS": "true",
             "SMTP_USE_SSL": "false",
@@ -38,7 +40,9 @@ def test_valid_production_environment_is_accepted():
     validate_environment(valid_environment())
 
 
-@pytest.mark.parametrize("name", ("BACKEND_IMAGE", "WEB_IMAGE"))
+@pytest.mark.parametrize(
+    "name", ("BACKEND_IMAGE", "WEB_IMAGE", "MINIO_IMAGE", "MINIO_MC_IMAGE")
+)
 def test_production_images_must_use_digest(name):
     values = valid_environment()
     values[name] = "registry.example.com/amp/image:latest"

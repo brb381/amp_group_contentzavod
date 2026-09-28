@@ -87,7 +87,7 @@ def validate_environment(values: dict[str, str]) -> None:
     }:
         raise ValueError("FRONTEND_URL must be a public HTTPS URL")
 
-    for name in ("BACKEND_IMAGE", "WEB_IMAGE"):
+    for name in ("BACKEND_IMAGE", "WEB_IMAGE", "MINIO_IMAGE", "MINIO_MC_IMAGE"):
         if not IMAGE_PATTERN.fullmatch(values.get(name, "")):
             raise ValueError(f"{name} must use an immutable image@sha256 digest")
 
