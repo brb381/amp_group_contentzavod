@@ -9,7 +9,6 @@ from app.clock import utc_now
 from app.program.service import suspicious_growth_threshold
 from app.content.models import Publication, PublicationAvailability
 from app.contracts import InstagramViewCollectionCommand
-from app.external_jobs import MAX_EXTERNAL_JOB_ATTEMPTS
 from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.readings.models import ReadingSource, ReadingStatus, ViewReading, ViewReadingHistory
@@ -23,6 +22,7 @@ from app.instagram.service import (
     blocks_provider,
     is_retryable_error,
     retry_at_for_error,
+    should_retry_error,
 )
 from app.instagram_config import InstagramWorkerSettings
 
@@ -94,7 +94,7 @@ def _record_error(
             provider.status = "blocked"
             provider.blocked_until = retry_at
             provider.block_reason = error.reason
-        should_retry = transient and job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
+        should_retry = should_retry_error(error, attempt_count=job.attempt_count)
         job.state = "retry_wait" if should_retry else "failed"
         job.available_at = retry_at or now
         job.lease_until = None

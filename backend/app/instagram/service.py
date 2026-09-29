@@ -40,6 +40,13 @@ def blocks_provider(error: InstagramClientError) -> bool:
     )
 
 
+def should_retry_error(error: InstagramClientError, *, attempt_count: int) -> bool:
+    return is_retryable_error(error) and (
+        error.status_code in PROVIDER_BLOCKING_STATUS_CODES
+        or attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
+    )
+
+
 def _retry_after(value: str | None, *, now: datetime) -> datetime | None:
     if not value:
         return None
@@ -177,7 +184,7 @@ def _record_error(
             provider.status = "blocked"
             provider.blocked_until = retry_at
             provider.block_reason = error.reason
-        should_retry = transient and job.attempt_count < MAX_EXTERNAL_JOB_ATTEMPTS
+        should_retry = should_retry_error(error, attempt_count=job.attempt_count)
         job.state = "retry_wait" if should_retry else "failed"
         job.available_at = retry_at or now
         job.lease_until = None

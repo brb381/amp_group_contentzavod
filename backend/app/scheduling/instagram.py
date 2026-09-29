@@ -89,6 +89,42 @@ def _request_interval_elapsed(db, now: datetime) -> bool:
     )
 
 
+def _view_collection_is_next(
+    last_enrichment_attempt: datetime | None,
+    last_view_attempt: datetime | None,
+) -> bool:
+    return last_enrichment_attempt is not None and (
+        last_view_attempt is None
+        or _aware(last_enrichment_attempt) >= _aware(last_view_attempt)
+    )
+
+
+def _view_collection_has_priority(db, now: datetime) -> bool:
+    last_enrichment_attempt = db.scalar(
+        select(func.max(InstagramEnrichmentJob.updated_at)).where(
+            InstagramEnrichmentJob.attempt_count > 0
+        )
+    )
+    last_view_attempt = db.scalar(
+        select(func.max(InstagramViewCollectionJob.updated_at)).where(
+            InstagramViewCollectionJob.attempt_count > 0
+        )
+    )
+    if not _view_collection_is_next(last_enrichment_attempt, last_view_attempt):
+        return False
+    due_view_job = db.scalar(
+        select(InstagramViewCollectionJob.id)
+        .join(Publication, Publication.id == InstagramViewCollectionJob.publication_id)
+        .where(
+            InstagramViewCollectionJob.state.in_(("pending", "retry_wait")),
+            InstagramViewCollectionJob.available_at <= now,
+            Publication.status == PublicationStatus.APPROVED,
+        )
+        .limit(1)
+    )
+    return due_view_job is not None
+
+
 def _recover_expired(db, model, now: datetime) -> None:
     jobs = list(
         db.scalars(
@@ -143,6 +179,7 @@ def dispatch_instagram_enrichment(
             not _provider_available(db, now)
             or _has_active_job(db, now)
             or not _request_interval_elapsed(db, now)
+            or _view_collection_has_priority(db, now)
         ):
             db.commit()
             return False

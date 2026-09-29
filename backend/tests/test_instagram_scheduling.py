@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 from app.scheduling.instagram import (
     INSTAGRAM_MIN_REQUEST_INTERVAL,
     _request_interval_elapsed,
+    _view_collection_is_next,
 )
 
 
@@ -38,3 +39,13 @@ def test_instagram_dispatch_resumes_after_request_interval():
         FakeDatabase(None, last_attempt),
         now,
     )
+
+
+def test_instagram_scheduler_alternates_enrichment_and_view_collection():
+    first = datetime(2026, 9, 29, 10, 0, tzinfo=timezone.utc)
+    second = first + timedelta(minutes=1)
+
+    assert not _view_collection_is_next(None, None)
+    assert _view_collection_is_next(first, None)
+    assert _view_collection_is_next(second, first)
+    assert not _view_collection_is_next(first, second)
