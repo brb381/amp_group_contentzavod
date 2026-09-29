@@ -44,8 +44,9 @@ def run_iteration(
             ("vk", dispatch_vk_enrichment),
             ("rutube-views", dispatch_rutube_view),
             ("rutube", dispatch_rutube_enrichment),
-            ("instagram-views", dispatch_instagram_view),
+            # Instagram shares one conservative request budget. Enrich cards first.
             ("instagram", dispatch_instagram_enrichment),
+            ("instagram-views", dispatch_instagram_view),
             ("dzen-views", dispatch_dzen_view),
             ("dzen", dispatch_dzen_enrichment),
         )
