@@ -388,13 +388,43 @@ export function changeAdminUserAccess(id: string, isBlocked: boolean, reason: st
 }
 
 export function loadAccountSettings(role: Role) {
+  if (role === 'admin') {
+    return Promise.all([
+      apiRequest<JsonObject>('/me/legal-acceptances?pageSize=50'),
+      apiRequest<JsonObject>('/program-settings'),
+      apiRequest<JsonObject>('/admin/legal-documents?pageSize=100'),
+    ]).then(async ([acceptances, programSettings, documentRegistry]) => {
+      const currentSummaries = (documentRegistry.items ?? []).filter((item: JsonObject) => item.is_current)
+      const currentDocuments = await Promise.all(
+        currentSummaries.map((item: JsonObject) => apiRequest<JsonObject>(`/legal-documents/${item.id}`)),
+      )
+      return {
+        legalStatus: { is_participation_allowed: true, required_acceptances: [] },
+        acceptances,
+        programSettings,
+        legalDocuments: Object.fromEntries(
+          currentDocuments.map((item) => [String(item.document_type), item]),
+        ),
+      }
+    })
+  }
+  if (role !== 'blogger') {
+    return Promise.all([
+      apiRequest<JsonObject>('/me/legal-acceptances?pageSize=50'),
+      apiRequest<JsonObject>('/program-settings'),
+    ]).then(([acceptances, programSettings]) => ({
+      legalStatus: { is_participation_allowed: true, required_acceptances: [] },
+      acceptances,
+      programSettings,
+      legalDocuments: {},
+    }))
+  }
   const core = Promise.all([
     apiRequest<JsonObject>('/me/legal-status'),
     apiRequest<JsonObject>('/me/legal-acceptances?pageSize=50'),
     apiRequest<JsonObject>('/program-settings'),
     getCurrentLegalDocuments(),
   ])
-  if (role !== 'blogger') return core.then(([legalStatus, acceptances, programSettings, legalDocuments]) => ({ legalStatus, acceptances, programSettings, legalDocuments }))
   return Promise.all([core, apiRequest<JsonObject>('/me/account-lifecycle'), apiRequest<JsonObject>('/me/account-deletion-requests?pageSize=20')])
     .then(([[legalStatus, acceptances, programSettings, legalDocuments], lifecycle, deletions]) => ({ legalStatus, acceptances, programSettings, legalDocuments, lifecycle, deletions }))
 }
