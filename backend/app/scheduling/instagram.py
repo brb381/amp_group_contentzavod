@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 
 from celery import Celery
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.clock import utc_now
 from app.content.models import (
@@ -33,6 +33,7 @@ settings = get_scheduler_settings()
 SessionLocal = create_session_factory(settings.database_url)
 producer = Celery("amp_instagram_scheduler", broker=settings.redis_url)
 INSTAGRAM_LEASE = timedelta(minutes=5)
+INSTAGRAM_MIN_REQUEST_INTERVAL = timedelta(seconds=30)
 
 
 def _aware(value: datetime) -> datetime:
@@ -69,6 +70,23 @@ def _has_active_job(db, now: datetime) -> bool:
         if active:
             return True
     return False
+
+
+def _request_interval_elapsed(db, now: datetime) -> bool:
+    latest_updates = [
+        db.scalar(
+            select(func.max(model.updated_at)).where(model.attempt_count > 0)
+        )
+        for model in (InstagramEnrichmentJob, InstagramViewCollectionJob)
+    ]
+    last_attempt = max(
+        (_aware(value) for value in latest_updates if value is not None),
+        default=None,
+    )
+    return (
+        last_attempt is None
+        or now - last_attempt >= INSTAGRAM_MIN_REQUEST_INTERVAL
+    )
 
 
 def _recover_expired(db, model, now: datetime) -> None:
@@ -121,7 +139,11 @@ def dispatch_instagram_enrichment(
         for job in stale:
             job.state = "failed"
             job.last_error_code = "publication_not_active"
-        if not _provider_available(db, now) or _has_active_job(db, now):
+        if (
+            not _provider_available(db, now)
+            or _has_active_job(db, now)
+            or not _request_interval_elapsed(db, now)
+        ):
             db.commit()
             return False
         row = db.execute(
@@ -214,7 +236,11 @@ def dispatch_instagram_view(
         for job in stale:
             job.state = "failed"
             job.last_error_code = "publication_not_active"
-        if not _provider_available(db, now) or _has_active_job(db, now):
+        if (
+            not _provider_available(db, now)
+            or _has_active_job(db, now)
+            or not _request_interval_elapsed(db, now)
+        ):
             db.commit()
             return False
         row = db.execute(
