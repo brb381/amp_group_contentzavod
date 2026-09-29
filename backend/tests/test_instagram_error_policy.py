@@ -1,5 +1,7 @@
+from datetime import datetime, timedelta, timezone
+
 from app.instagram.client import InstagramClientError
-from app.instagram.service import blocks_provider, is_retryable_error
+from app.instagram.service import blocks_provider, is_retryable_error, retry_at_for_error
 
 
 def test_instagram_unauthorized_response_uses_provider_backoff():
@@ -7,6 +9,24 @@ def test_instagram_unauthorized_response_uses_provider_backoff():
 
     assert is_retryable_error(error)
     assert blocks_provider(error)
+
+
+def test_instagram_unauthorized_response_has_shared_minimum_backoff():
+    now = datetime(2026, 9, 29, tzinfo=timezone.utc)
+    error = InstagramClientError(401, "instagram_http_error", retry_after="60")
+
+    assert retry_at_for_error(error, now=now, attempt_count=1) == now + timedelta(
+        minutes=15
+    )
+
+
+def test_instagram_rate_limit_respects_retry_after():
+    now = datetime(2026, 9, 29, tzinfo=timezone.utc)
+    error = InstagramClientError(429, "instagram_http_error", retry_after="600")
+
+    assert retry_at_for_error(error, now=now, attempt_count=1) == now + timedelta(
+        minutes=10
+    )
 
 
 def test_invalid_single_response_retries_without_blocking_all_jobs():

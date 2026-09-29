@@ -1,5 +1,4 @@
 import logging
-from datetime import timedelta
 
 from sqlalchemy import select
 
@@ -23,7 +22,7 @@ from app.instagram.service import (
     WORKER_UNEXPECTED_ERROR,
     blocks_provider,
     is_retryable_error,
-    _retry_after,
+    retry_at_for_error,
 )
 from app.instagram_config import InstagramWorkerSettings
 
@@ -87,8 +86,9 @@ def _record_error(
         transient = is_retryable_error(error)
         retry_at = None
         if transient:
-            fallback = now + timedelta(seconds=min(1800, 60 * (2 ** max(0, job.attempt_count - 1))))
-            retry_at = _retry_after(error.retry_after, now=now) or fallback
+            retry_at = retry_at_for_error(
+                error, now=now, attempt_count=job.attempt_count
+            )
         if blocks_provider(error):
             provider = _provider(db)
             provider.status = "blocked"

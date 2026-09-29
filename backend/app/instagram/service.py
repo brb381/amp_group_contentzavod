@@ -21,6 +21,7 @@ WORKER_UNEXPECTED_ERROR = "worker_unexpected_error"
 RETRYABLE_REASONS = {"instagram_unreachable", "instagram_response_invalid"}
 PROVIDER_BLOCKING_REASONS = {"instagram_unreachable"}
 PROVIDER_BLOCKING_STATUS_CODES = {401, 403, 429}
+PROVIDER_AUTH_BACKOFF = timedelta(minutes=15)
 
 
 def is_retryable_error(error: InstagramClientError) -> bool:
@@ -50,6 +51,18 @@ def _retry_after(value: str | None, *, now: datetime) -> datetime | None:
             return parsed if parsed > now else now + timedelta(seconds=60)
         except (TypeError, ValueError):
             return None
+
+
+def retry_at_for_error(
+    error: InstagramClientError, *, now: datetime, attempt_count: int
+) -> datetime:
+    fallback = now + timedelta(
+        seconds=min(1800, 60 * (2 ** max(0, attempt_count - 1)))
+    )
+    retry_at = _retry_after(error.retry_after, now=now) or fallback
+    if error.status_code in {401, 403}:
+        retry_at = max(retry_at, now + PROVIDER_AUTH_BACKOFF)
+    return retry_at
 
 
 def _provider_state(db) -> ExternalProviderState:
@@ -156,8 +169,9 @@ def _record_error(
         transient = is_retryable_error(error)
         retry_at = None
         if transient:
-            fallback = now + timedelta(seconds=min(1800, 60 * (2 ** max(0, job.attempt_count - 1))))
-            retry_at = _retry_after(error.retry_after, now=now) or fallback
+            retry_at = retry_at_for_error(
+                error, now=now, attempt_count=job.attempt_count
+            )
         if blocks_provider(error):
             provider = _provider_state(db)
             provider.status = "blocked"
