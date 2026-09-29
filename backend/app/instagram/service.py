@@ -18,7 +18,8 @@ from app.instagram_config import InstagramWorkerSettings
 
 logger = logging.getLogger(__name__)
 WORKER_UNEXPECTED_ERROR = "worker_unexpected_error"
-TRANSIENT_REASONS = {"instagram_unreachable", "instagram_response_invalid"}
+RETRYABLE_REASONS = {"instagram_unreachable", "instagram_response_invalid"}
+PROVIDER_BLOCKING_REASONS = {"instagram_unreachable"}
 
 
 def _retry_after(value: str | None, *, now: datetime) -> datetime | None:
@@ -138,12 +139,18 @@ def _record_error(
         transient = (
             error.status_code in {403, 429}
             or (error.status_code is not None and error.status_code >= 500)
-            or error.reason in TRANSIENT_REASONS
+            or error.reason in RETRYABLE_REASONS
         )
         retry_at = None
         if transient:
             fallback = now + timedelta(seconds=min(1800, 60 * (2 ** max(0, job.attempt_count - 1))))
             retry_at = _retry_after(error.retry_after, now=now) or fallback
+        blocks_provider = (
+            error.status_code in {403, 429}
+            or (error.status_code is not None and error.status_code >= 500)
+            or error.reason in PROVIDER_BLOCKING_REASONS
+        )
+        if blocks_provider:
             provider = _provider_state(db)
             provider.status = "blocked"
             provider.blocked_until = retry_at
