@@ -20,9 +20,9 @@ from app.readings.revision import lock_reading_dataset_revision
 from app.instagram.client import InstagramClient, InstagramClientError
 from app.instagram.models import InstagramViewCollectionJob
 from app.instagram.service import (
-    PROVIDER_BLOCKING_REASONS,
-    RETRYABLE_REASONS,
     WORKER_UNEXPECTED_ERROR,
+    blocks_provider,
+    is_retryable_error,
     _retry_after,
 )
 from app.instagram_config import InstagramWorkerSettings
@@ -84,21 +84,12 @@ def _record_error(
         if not job:
             return
         now = utc_now()
-        transient = (
-            error.status_code in {403, 429}
-            or (error.status_code is not None and error.status_code >= 500)
-            or error.reason in RETRYABLE_REASONS
-        )
+        transient = is_retryable_error(error)
         retry_at = None
         if transient:
             fallback = now + timedelta(seconds=min(1800, 60 * (2 ** max(0, job.attempt_count - 1))))
             retry_at = _retry_after(error.retry_after, now=now) or fallback
-        blocks_provider = (
-            error.status_code in {403, 429}
-            or (error.status_code is not None and error.status_code >= 500)
-            or error.reason in PROVIDER_BLOCKING_REASONS
-        )
-        if blocks_provider:
+        if blocks_provider(error):
             provider = _provider(db)
             provider.status = "blocked"
             provider.blocked_until = retry_at

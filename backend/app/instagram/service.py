@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 WORKER_UNEXPECTED_ERROR = "worker_unexpected_error"
 RETRYABLE_REASONS = {"instagram_unreachable", "instagram_response_invalid"}
 PROVIDER_BLOCKING_REASONS = {"instagram_unreachable"}
+PROVIDER_BLOCKING_STATUS_CODES = {401, 403, 429}
+
+
+def is_retryable_error(error: InstagramClientError) -> bool:
+    return (
+        error.status_code in PROVIDER_BLOCKING_STATUS_CODES
+        or (error.status_code is not None and error.status_code >= 500)
+        or error.reason in RETRYABLE_REASONS
+    )
+
+
+def blocks_provider(error: InstagramClientError) -> bool:
+    return (
+        error.status_code in PROVIDER_BLOCKING_STATUS_CODES
+        or (error.status_code is not None and error.status_code >= 500)
+        or error.reason in PROVIDER_BLOCKING_REASONS
+    )
 
 
 def _retry_after(value: str | None, *, now: datetime) -> datetime | None:
@@ -136,21 +153,12 @@ def _record_error(
         if not job:
             return
         now = utc_now()
-        transient = (
-            error.status_code in {403, 429}
-            or (error.status_code is not None and error.status_code >= 500)
-            or error.reason in RETRYABLE_REASONS
-        )
+        transient = is_retryable_error(error)
         retry_at = None
         if transient:
             fallback = now + timedelta(seconds=min(1800, 60 * (2 ** max(0, job.attempt_count - 1))))
             retry_at = _retry_after(error.retry_after, now=now) or fallback
-        blocks_provider = (
-            error.status_code in {403, 429}
-            or (error.status_code is not None and error.status_code >= 500)
-            or error.reason in PROVIDER_BLOCKING_REASONS
-        )
-        if blocks_provider:
+        if blocks_provider(error):
             provider = _provider_state(db)
             provider.status = "blocked"
             provider.blocked_until = retry_at
