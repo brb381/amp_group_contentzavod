@@ -25,6 +25,7 @@ from app.integrations.models import ExternalProviderState
 from app.platforms import Platform
 from app.scheduler_config import get_scheduler_settings
 from app.readings.view_slots import current_view_collection_slot
+from app.scheduling.view_collection import expire_obsolete_view_jobs
 from app.dzen.models import DzenEnrichmentJob, DzenViewCollectionJob
 
 
@@ -200,6 +201,7 @@ def dispatch_dzen_view(
     try:
         _create_view_jobs(db, now)
         _recover_expired(db, DzenViewCollectionJob, now)
+        expire_obsolete_view_jobs(db, DzenViewCollectionJob, now)
         stale = list(
             db.scalars(
                 select(DzenViewCollectionJob)

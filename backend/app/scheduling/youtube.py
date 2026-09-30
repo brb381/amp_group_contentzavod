@@ -27,6 +27,7 @@ from app.platforms import Platform
 from app.readings.models import YouTubeViewCollectionJob
 from app.scheduler_config import get_scheduler_settings
 from app.readings.view_slots import current_view_collection_slot
+from app.scheduling.view_collection import expire_obsolete_view_jobs
 from app.youtube.models import ExternalProviderState, ExternalQuotaUsage, YouTubeEnrichmentJob
 from app.youtube.time import next_pacific_reset, pacific_quota_date
 
@@ -327,6 +328,7 @@ def dispatch_youtube_view_batch(
             job.lease_until = None
             job.dispatch_id = None
             job.last_error_code = "worker_lease_expired"
+        expire_obsolete_view_jobs(db, YouTubeViewCollectionJob, now)
         if not _provider_available(db, now) or _has_active_job(db, now):
             db.commit()
             return False
