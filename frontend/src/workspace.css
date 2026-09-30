@@ -364,14 +364,7 @@ button, a, input, select, textarea,
   transition-duration: .18s;
   transition-timing-function: ease;
 }
-.workspace > main > *, .account-content > *, .request-state { animation: content-settle .22s ease-out both; }
-::view-transition-old(root) { animation: view-old .14s ease-in both; }
-::view-transition-new(root) { animation: view-new .22s ease-out both; }
-
 @keyframes auth-section-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes content-settle { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes view-old { to { opacity: 0; transform: translateY(-3px); } }
-@keyframes view-new { from { opacity: 0; transform: translateY(5px); } }
 
 @media (max-width: 920px) {
   .auth-page { grid-template-columns: minmax(390px, 52%) minmax(0, 1fr); }
@@ -394,5 +387,5 @@ button, a, input, select, textarea,
 }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-old(root), ::view-transition-new(root),
-  .auth-panel__body, .workspace > main > *, .account-content > *, .request-state { animation: none; }
+  .auth-panel__body { animation: none; }
 }

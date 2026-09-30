@@ -21,6 +21,8 @@
 
 * { box-sizing: border-box; }
 
+html { scrollbar-gutter: stable; }
+
 body {
   margin: 0;
   min-width: 320px;
@@ -219,7 +221,7 @@ kbd { padding: 3px 6px; background: #fff; border: 1px solid #d9dddf; border-radi
 .notification-button span { position: absolute; width: 7px; height: 7px; top: 7px; right: 7px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; }
 .menu-button { display: none; margin-right: 8px; }
 
-main { min-width: 0; min-height: calc(100vh - 64px); max-width: 1540px; margin: 0 auto; padding: 30px clamp(20px, 3vw, 44px) 56px; overflow-x: clip; animation: page-enter .22s ease-out both; }
+main { min-width: 0; min-height: calc(100vh - 64px); max-width: 1540px; margin: 0 auto; padding: 30px clamp(20px, 3vw, 44px) 56px; overflow-x: clip; }
 .mobile-title { display: none; }
 
 .page-heading {
@@ -1165,7 +1167,6 @@ tbody tr:hover { background: #fafbfb; }
 .account-danger form .button { width: max-content; }
 .account-error { margin-top: 18px; }
 
-@keyframes page-enter { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes backdrop-enter { from { background: rgba(20,23,25,0); } to { background: rgba(20,23,25,.38); } }
 @keyframes drawer-enter { from { opacity: .7; transform: translateX(22px); } to { opacity: 1; transform: translateX(0); } }
 @keyframes toast-enter { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
