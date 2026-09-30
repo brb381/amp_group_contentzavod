@@ -29,7 +29,12 @@ class FakeOpener:
         return FakeResponse(self._responses.pop(0))
 
 
-def _embed(shortcode: str, *, play_count: int | None = 456_789) -> bytes:
+def _embed(
+    shortcode: str,
+    *,
+    play_count: int | None = 456_789,
+    like_count: int | None = None,
+) -> bytes:
     media = {
         "__typename": "GraphVideo",
         "id": "987654321",
@@ -40,6 +45,8 @@ def _embed(shortcode: str, *, play_count: int | None = 456_789) -> bytes:
     }
     if play_count is not None:
         media["video_view_count"] = play_count
+    if like_count is not None:
+        media["edge_liked_by"] = {"count": like_count}
     context = {"gql_data": {"shortcode_media": media}}
     server_data = {
         "define": [
@@ -87,6 +94,17 @@ def test_enrichment_does_not_require_view_counter():
 
 def test_view_collection_requires_public_view_counter():
     opener = FakeOpener(_embed("ABC_123", play_count=None))
+
+    with pytest.raises(InstagramClientError) as error:
+        InstagramClient(timeout_seconds=5, opener=opener).fetch_public_stats(
+            "https://www.instagram.com/reel/ABC_123/"
+        )
+
+    assert error.value.reason == "instagram_response_invalid"
+
+
+def test_view_collection_rejects_counter_below_public_engagement():
+    opener = FakeOpener(_embed("ABC_123", play_count=1, like_count=11))
 
     with pytest.raises(InstagramClientError) as error:
         InstagramClient(timeout_seconds=5, opener=opener).fetch_public_stats(

@@ -55,7 +55,7 @@ def _thumbnail(item: dict[str, Any]) -> str | None:
 
 
 def _direct_play_count(item: dict[str, Any]) -> int | None:
-    return next(
+    play_count = next(
         (
             value
             for key in ("play_count", "view_count", "video_play_count", "video_view_count")
@@ -63,6 +63,17 @@ def _direct_play_count(item: dict[str, Any]) -> int | None:
         ),
         None,
     )
+    if play_count is None:
+        return None
+
+    engagement_counts = []
+    for key in ("edge_liked_by", "edge_media_preview_like", "edge_media_to_comment"):
+        edge = item.get(key)
+        if isinstance(edge, dict) and (count := nonnegative_int(edge.get("count"))) is not None:
+            engagement_counts.append(count)
+    if engagement_counts and play_count < max(engagement_counts):
+        return None
+    return play_count
 
 
 def _serverjs_documents(body: bytes) -> list[object]:
