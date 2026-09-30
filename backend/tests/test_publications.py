@@ -58,6 +58,17 @@ from app.rutube.service import execute_rutube_enrichment
 from app.rutube.views import execute_rutube_view_collection
 from app.rutube_config import RutubeWorkerSettings
 from app.instagram.models import InstagramEnrichmentJob
+from app.instagram.models import InstagramViewCollectionJob
+from app.instagram.schemas import InstagramPublicVideo
+from app.instagram.service import execute_instagram_enrichment
+from app.instagram.views import execute_instagram_view_collection
+from app.instagram_config import InstagramWorkerSettings
+from app.contracts import InstagramEnrichmentCommand, InstagramViewCollectionCommand
+from app.scheduling.instagram import (
+    INSTAGRAM_MIN_REQUEST_INTERVAL,
+    dispatch_instagram_enrichment,
+    dispatch_instagram_view,
+)
 from app.dzen.models import DzenEnrichmentJob
 from app.legal.models import AcceptanceMethod, LegalAcceptance, LegalDocument
 
@@ -909,6 +920,26 @@ def _submitted_tiktok_publication(client, suffix: str) -> dict:
     return submitted.json()
 
 
+def _submitted_instagram_publication(client, suffix: str) -> dict:
+    blogger = create_blogger(client, f"instagram-worker-{suffix}@example.com")
+    account = create_social_account(client, blogger.id, platform=Platform.INSTAGRAM)
+    login(client, blogger.email)
+    card = create_card(client, title=f"Instagram {suffix}")
+    publication = create_publication(
+        client,
+        card["id"],
+        account.id,
+        f"https://www.instagram.com/reel/TEST_{suffix}/",
+    )
+    submitted = client.post(
+        f"/api/v1/me/publications/{publication['id']}/submissions",
+        headers=csrf_headers(client),
+    )
+    assert submitted.status_code == 201
+    assert submitted.json()["enrichment_status"] == "pending"
+    return submitted.json()
+
+
 @pytest.mark.parametrize(
     ("platform", "url", "job_model"),
     (
@@ -986,6 +1017,84 @@ def test_tiktok_scheduler_and_worker_apply_public_metadata(client):
         assert stored.external_author_id == "creator"
         assert stored.availability.value == "available"
         assert job.state == "succeeded"
+
+
+def test_instagram_scheduler_and_worker_store_views_and_refresh_preview(client):
+    publication = _submitted_instagram_publication(client, "01")
+    producer = CapturingProducer()
+    session_factory = client.app.state.test_session
+
+    assert dispatch_instagram_enrichment(
+        session_factory=session_factory, task_producer=producer
+    ) is True
+    command = InstagramEnrichmentCommand.model_validate(
+        producer.messages[0]["args"][0]
+    )
+
+    class PublicClient:
+        def __init__(self):
+            self.thumbnail = "https://cdninstagram.com/initial.jpg"
+
+        def _response(self, play_count):
+            return InstagramPublicVideo.model_validate(
+                {
+                    "id": "TEST_01",
+                    "title": "Public Instagram title",
+                    "author_name": "Creator",
+                    "author_url": "https://www.instagram.com/creator/",
+                    "thumbnail_url": self.thumbnail,
+                    "stats": {"playCount": play_count},
+                }
+            )
+
+        def fetch_publication(self, source_url):
+            return self._response(0)
+
+        def fetch_public_stats(self, source_url):
+            return self._response(123_456)
+
+    public_client = PublicClient()
+    settings = InstagramWorkerSettings(
+        database_url="sqlite+pysqlite:///:memory:",
+        redis_url="redis://localhost:6379/0",
+    )
+    execute_instagram_enrichment(
+        command, settings, session_factory, client=public_client
+    )
+
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication["id"]))
+        stored.status = PublicationStatus.APPROVED
+        assert stored.external_thumbnail_url == "https://cdninstagram.com/initial.jpg"
+        db.commit()
+
+    public_client.thumbnail = "https://cdninstagram.com/refreshed.jpg"
+    view_producer = CapturingProducer()
+    now = utc_now() + INSTAGRAM_MIN_REQUEST_INTERVAL
+    assert dispatch_instagram_view(
+        now=now,
+        session_factory=session_factory,
+        task_producer=view_producer,
+    ) is True
+    view_command = InstagramViewCollectionCommand.model_validate(
+        view_producer.messages[0]["args"][0]
+    )
+    execute_instagram_view_collection(
+        view_command,
+        settings,
+        session_factory,
+        client=public_client,
+    )
+
+    with session_factory() as db:
+        stored = db.get(Publication, uuid.UUID(publication["id"]))
+        reading = db.scalar(select(ViewReading))
+        view_job = db.scalar(select(InstagramViewCollectionJob))
+        assert stored.external_thumbnail_url == "https://cdninstagram.com/refreshed.jpg"
+        assert reading.source == ReadingSource.INSTAGRAM_PUBLIC
+        assert reading.reported_value == 123_456
+        assert "approximate_public_counter" in reading.risk_flags
+        assert view_job.state == "succeeded"
 
 
 def test_tiktok_429_blocks_new_dispatch_until_retry_after(client):

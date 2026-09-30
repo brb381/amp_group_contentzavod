@@ -156,6 +156,7 @@ def _apply_success(
                 job.state = "failed"
                 job.last_error_code = "reading_period_financially_closed"
             else:
+                captured_at = utc_now()
                 key = view_reading_idempotency_key("instagram-public", job.collection_date, job.collection_slot)
                 reading = db.scalar(
                     select(ViewReading).where(
@@ -182,7 +183,7 @@ def _apply_success(
                         status=ReadingStatus.PENDING,
                         risk_flags=flags,
                         idempotency_key=key,
-                        captured_at=utc_now(),
+                        captured_at=captured_at,
                     )
                     db.add(reading)
                     db.flush()
@@ -195,6 +196,10 @@ def _apply_success(
                         )
                     )
                     revision.revision += 1
+                publication.external_title = response.title
+                publication.external_author_name = response.author_name
+                publication.external_thumbnail_url = str(response.thumbnail_url)
+                publication.enriched_at = captured_at
                 publication.availability = PublicationAvailability.AVAILABLE
                 job.state = "succeeded"
                 job.last_error_code = None

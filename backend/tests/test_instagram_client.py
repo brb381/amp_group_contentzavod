@@ -1,9 +1,8 @@
 import json
-from urllib.parse import parse_qs
 
 import pytest
 
-from app.instagram.client import CLIPS_DOC_ID, MEDIA_DOC_ID, InstagramClient, InstagramClientError
+from app.instagram.client import InstagramClient, InstagramClientError
 
 
 class FakeResponse:
@@ -30,51 +29,37 @@ class FakeOpener:
         return FakeResponse(self._responses.pop(0))
 
 
-def _metadata(shortcode: str) -> bytes:
-    return json.dumps(
-        {
-            "data": {
-                "xdt_api__v1__media__shortcode__web_info": {
-                    "items": [
-                        {
-                            "code": shortcode,
-                            "image_versions2": {
-                                "candidates": [{"url": "https://cdninstagram.com/preview.jpg"}]
-                            },
-                            "user": {
-                                "pk": "42",
-                                "username": "creator",
-                                "full_name": "Author",
-                            },
-                            "caption": {"text": "Test reel"},
-                        }
-                    ]
-                }
-            }
-        }
+def _embed(shortcode: str, *, play_count: int | None = 456_789) -> bytes:
+    media = {
+        "__typename": "GraphVideo",
+        "id": "987654321",
+        "shortcode": shortcode,
+        "display_url": "https://cdninstagram.com/preview.jpg",
+        "owner": {"id": "42", "username": "creator", "full_name": "Author"},
+        "edge_media_to_caption": {"edges": [{"node": {"text": "Test reel"}}]},
+    }
+    if play_count is not None:
+        media["video_view_count"] = play_count
+    context = {"gql_data": {"shortcode_media": media}}
+    server_data = {
+        "define": [
+            [
+                "PolarisEmbedInit",
+                [],
+                {"contextJSON": json.dumps(context, separators=(",", ":"))},
+                1,
+            ]
+        ]
+    }
+    return (
+        "<html><script>requireLazy([],function(){s.handle("
+        + json.dumps(server_data, separators=(",", ":"))
+        + ");});</script></html>"
     ).encode()
 
 
-def _clips(shortcode: str, play_count: int) -> bytes:
-    return json.dumps(
-        {
-            "data": {
-                "xdt_api__v1__clips__user__connection_v2": {
-                    "edges": [
-                        {"node": {"media": {"code": shortcode, "play_count": play_count}}}
-                    ]
-                }
-            }
-        }
-    ).encode()
-
-
-def _doc_id(request) -> str:
-    return parse_qs(request.data.decode())["doc_id"][0]
-
-
-def test_client_reads_public_reel_metadata_and_views():
-    opener = FakeOpener(b"page shell", _metadata("ABC_123"), _clips("ABC_123", 456_789))
+def test_client_reads_public_embed_metadata_and_views_in_one_request():
+    opener = FakeOpener(_embed("ABC_123"))
 
     result = InstagramClient(timeout_seconds=5, opener=opener).fetch_public_stats(
         "https://www.instagram.com/reel/ABC_123/"
@@ -84,45 +69,46 @@ def test_client_reads_public_reel_metadata_and_views():
     assert result.stats.playCount == 456_789
     assert result.author_name == "Author"
     assert str(result.thumbnail_url) == "https://cdninstagram.com/preview.jpg"
-    assert [_doc_id(request) for request in opener.requests[1:]] == [MEDIA_DOC_ID, CLIPS_DOC_ID]
+    assert len(opener.requests) == 1
+    assert opener.requests[0].full_url.endswith("/reel/ABC_123/embed/captioned/")
+    assert opener.requests[0].get_header("Sec-fetch-dest") == "iframe"
 
 
 def test_enrichment_does_not_require_view_counter():
-    opener = FakeOpener(b"page shell", _metadata("ABC_123"))
+    opener = FakeOpener(_embed("ABC_123", play_count=None))
 
     result = InstagramClient(timeout_seconds=5, opener=opener).fetch_publication(
         "https://www.instagram.com/reel/ABC_123/"
     )
 
     assert result.stats.playCount == 0
-    assert len(opener.requests) == 2
+    assert len(opener.requests) == 1
+
+
+def test_view_collection_requires_public_view_counter():
+    opener = FakeOpener(_embed("ABC_123", play_count=None))
+
+    with pytest.raises(InstagramClientError) as error:
+        InstagramClient(timeout_seconds=5, opener=opener).fetch_public_stats(
+            "https://www.instagram.com/reel/ABC_123/"
+        )
+
+    assert error.value.reason == "instagram_response_invalid"
 
 
 def test_client_rejects_payload_for_another_reel():
-    opener = FakeOpener(b"page shell", _metadata("OTHER"))
+    opener = FakeOpener(_embed("OTHER"))
 
     with pytest.raises(InstagramClientError) as error:
-        InstagramClient(timeout_seconds=5, opener=opener).fetch_public_stats(
+        InstagramClient(timeout_seconds=5, opener=opener).fetch_publication(
             "https://www.instagram.com/reel/ABC_123/"
         )
 
     assert error.value.reason == "instagram_response_invalid"
 
 
-def test_client_rejects_stats_when_reel_is_absent_from_public_clips():
-    opener = FakeOpener(b"page shell", _metadata("ABC_123"), _clips("OTHER", 123))
-
-    with pytest.raises(InstagramClientError) as error:
-        InstagramClient(timeout_seconds=5, opener=opener).fetch_public_stats(
-            "https://www.instagram.com/reel/ABC_123/"
-        )
-
-    assert error.value.reason == "instagram_response_invalid"
-
-
-def test_client_does_not_treat_graphql_error_as_deleted_reel():
-    error_payload = json.dumps({"errors": [{"message": "Please wait"}]}).encode()
-    opener = FakeOpener(b"page shell", error_payload)
+def test_client_rejects_page_without_embed_context():
+    opener = FakeOpener(b"<html>login page</html>")
 
     with pytest.raises(InstagramClientError) as error:
         InstagramClient(timeout_seconds=5, opener=opener).fetch_publication(
@@ -131,3 +117,49 @@ def test_client_does_not_treat_graphql_error_as_deleted_reel():
 
     assert error.value.reason == "instagram_response_invalid"
     assert error.value.status_code is None
+
+
+def test_client_ignores_unrelated_context_before_media():
+    body = _embed("ABC_123")
+    unrelated = json.dumps(
+        {
+            "define": [
+                [
+                    "OtherInit",
+                    [],
+                    {"contextJSON": json.dumps({"feature": True})},
+                    1,
+                ]
+            ]
+        }
+    ).encode()
+    body = b"<script>s.handle(" + unrelated + b");</script>" + body
+
+    result = InstagramClient(
+        timeout_seconds=5, opener=FakeOpener(body)
+    ).fetch_publication("https://www.instagram.com/reel/ABC_123/")
+
+    assert result.id == "ABC_123"
+
+
+def test_client_treats_explicitly_missing_embed_media_as_not_found():
+    context = {"gql_data": {"shortcode_media": None}}
+    server_data = {
+        "define": [
+            [
+                "PolarisEmbedInit",
+                [],
+                {"contextJSON": json.dumps(context, separators=(",", ":"))},
+                1,
+            ]
+        ]
+    }
+    body = b"<script>s.handle(" + json.dumps(server_data).encode() + b");</script>"
+
+    with pytest.raises(InstagramClientError) as error:
+        InstagramClient(
+            timeout_seconds=5, opener=FakeOpener(body)
+        ).fetch_publication("https://www.instagram.com/reel/ABC_123/")
+
+    assert error.value.reason == "instagram_not_found"
+    assert error.value.status_code == 404

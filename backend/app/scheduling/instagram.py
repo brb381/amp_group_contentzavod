@@ -191,7 +191,11 @@ def dispatch_instagram_enrichment(
                 InstagramEnrichmentJob.available_at <= now,
                 Publication.status.in_((PublicationStatus.PENDING_REVIEW, PublicationStatus.APPROVED)),
             )
-            .order_by(InstagramEnrichmentJob.created_at, InstagramEnrichmentJob.id)
+            .order_by(
+                InstagramEnrichmentJob.attempt_count,
+                InstagramEnrichmentJob.created_at,
+                InstagramEnrichmentJob.id,
+            )
             .limit(1)
             .with_for_update(of=InstagramEnrichmentJob, skip_locked=True)
         ).one_or_none()
@@ -288,7 +292,11 @@ def dispatch_instagram_view(
                 InstagramViewCollectionJob.available_at <= now,
                 Publication.status == PublicationStatus.APPROVED,
             )
-            .order_by(InstagramViewCollectionJob.created_at, InstagramViewCollectionJob.id)
+            .order_by(
+                InstagramViewCollectionJob.attempt_count,
+                InstagramViewCollectionJob.created_at,
+                InstagramViewCollectionJob.id,
+            )
             .limit(1)
             .with_for_update(of=InstagramViewCollectionJob, skip_locked=True)
         ).one_or_none()
